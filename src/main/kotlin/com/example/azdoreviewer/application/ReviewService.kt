@@ -4,6 +4,7 @@ import com.example.azdoreviewer.domain.ChangeType
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.infrastructure.ai.AiProviderFactory
 import com.example.azdoreviewer.infrastructure.ai.FileReviewRequest
+import com.example.azdoreviewer.infrastructure.analyzer.RoslynAnalyzerRunner
 import com.example.azdoreviewer.infrastructure.cache.PrCacheService
 import com.example.azdoreviewer.settings.AzdoSettings
 import com.intellij.openapi.components.Service
@@ -12,6 +13,7 @@ import com.intellij.openapi.diagnostic.thisLogger
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import java.io.File
 
 @Service(Service.Level.APP)
 class ReviewService {
@@ -68,6 +70,54 @@ class ReviewService {
         val sorted = results.sortedWith(compareBy({ it.severity.ordinal }, { it.file }, { it.line }))
         cache.invalidatePr(prId) // ensure fresh next time
         return sorted
+    }
+
+    /**
+     * Runs Roslyn static analysis on locally-checked-out changed C# files.
+     * Returns analyzer findings (mapped to ReviewComments) for those files, or empty if
+     * dotnet/analyzer isn't available or no files are local. Safe to call in the background.
+     *
+     * @param localFiles map of (display server path) -> (absolute local file path) for changed .cs files
+     */
+    fun runAnalyzers(localFiles: Map<String, String>): List<ReviewComment> {
+        val csFiles = localFiles.filter { it.value.endsWith(".cs", ignoreCase = true) }
+        if (csFiles.isEmpty()) return emptyList()
+
+        val runner = RoslynAnalyzerRunner()
+        if (!runner.isAvailable()) {
+            thisLogger().info("dotnet not available — skipping static analysis.")
+            return emptyList()
+        }
+
+        // Find the project/solution to analyze: nearest .csproj walking up from the first file,
+        // else nearest .sln.
+        val firstAbs = csFiles.values.first()
+        val project = findProjectOrSolution(File(firstAbs)) ?: return emptyList()
+
+        val absSet = csFiles.values.map { File(it).absolutePath }.toSet()
+        val diags = runner.analyze(project, absSet)
+
+        // Map each diagnostic back to the matching display path so it lines up with AI findings.
+        return diags.mapNotNull { d ->
+            val display = csFiles.entries.firstOrNull { (_, abs) ->
+                File(abs).absolutePath.endsWith(d.filePath.substringAfterLast('/')) ||
+                d.filePath.replace('\\','/').endsWith(File(abs).name)
+            }?.key ?: d.filePath
+            RoslynAnalyzerRunner.toReviewComment(d, display)
+        }
+    }
+
+    private fun findProjectOrSolution(start: File): File? {
+        var dir: File? = start.parentFile
+        var firstSln: File? = null
+        while (dir != null) {
+            dir.listFiles()?.let { files ->
+                files.firstOrNull { it.extension == "csproj" }?.let { return it }
+                if (firstSln == null) firstSln = files.firstOrNull { it.extension == "sln" }
+            }
+            dir = dir.parentFile
+        }
+        return firstSln
     }
 
     /** Sends a tiny request to verify the AI key/model works. Throws with the real reason on failure. */

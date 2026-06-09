@@ -59,10 +59,22 @@ settings/      AzdoSettings (PersistentStateComponent), AzdoSettingsState, Confi
   `anthropic-beta: oauth-2025-04-20`, and a system prompt identifying as Claude Code.
   NOTE: this may violate Anthropic ToS; user accepted the risk.
 
+### Static analysis (Roslyn) — hybrid review
+- Real Roslyn analyzers (CA rules, EF translatability, security) run via the **Roslynator CLI**
+  (`roslynator analyze <csproj> --output x.sarif`), auto-installed as a dotnet global tool
+  (`dotnet tool install -g roslynator.dotnet.cli`). Output is XML: `<Diagnostic Id><Message><FilePath><Location Line=.. />`.
+  ~3s per small project; loads project via MSBuild (needs restore-able checked-out branch).
+- Architecture: AI review returns FAST, then `ReviewService.runAnalyzers(localFiles)` runs in the
+  BACKGROUND (ReviewResultPanel.runAnalyzersInBackground) and MERGES analyzer findings tagged
+  `Source.ANALYZER` (shown with "⚙ analyzer"). Only runs if the PR branch is checked out locally.
+- Division of labor: analyzers own deterministic facts (EF translatability, CA rules, injection);
+  the AI prompt owns judgment (DDD layering, business logic, naming, N+1/over-fetch design,
+  ABP UnitOfWork semantics). The prompt explicitly tells the model NOT to judge EF translatability.
+- Files: infrastructure/analyzer/RoslynAnalyzerRunner.kt + RoslynatorXmlParser.kt.
+
 ### Rider / IntelliJ gotchas
 - **C# diagnostics from ReSharper are NOT reachable** via standard plugin API (they live in the
-  out-of-process backend over RdProtocol). `DaemonCodeAnalyzer.getHighlights` won't return them.
-  So review quality comes from a strong prompt + full-file context, not live diagnostics.
+  out-of-process backend over RdProtocol). That's WHY we shell out to Roslynator CLI instead.
 - **Never render emoji/HTML in a JEditorPane on Linux** — it does slow font-fallback and FROZE
   the EDT on every click. The detail pane is a plain `JTextPane` with `StyledDocument`. Keep it that way.
 - File open / Apply Fix must be non-blocking: bail if `DumbService.isDumb`, use

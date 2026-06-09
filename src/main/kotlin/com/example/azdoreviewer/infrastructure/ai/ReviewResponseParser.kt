@@ -39,6 +39,7 @@ object ReviewResponseParser {
         val endLine: Int = 0,
         val severity: String = "Info",
         val category: String = "CleanCode",
+        val title: String = "",
         val comment: String = "",
         val suggestion: String = "",
         val suggestedCode: String = "",
@@ -51,6 +52,7 @@ object ReviewResponseParser {
             endLine         = endLine,
             severity        = parseSeverity(severity),
             category        = parseCategory(category),
+            title           = title,
             comment         = comment,
             suggestion      = suggestion,
             suggestedCode   = suggestedCode,
@@ -72,16 +74,23 @@ object ReviewResponseParser {
         }
     }
 
-    private fun parseCategory(s: String): ReviewCategory = when (s.lowercase()) {
-        "bug"           -> ReviewCategory.BUG
-        "security"      -> ReviewCategory.SECURITY
-        "performance"   -> ReviewCategory.PERFORMANCE
-        "cleancode", "clean_code" -> ReviewCategory.CLEAN_CODE
-        "solid"         -> ReviewCategory.SOLID
-        "ddd"           -> ReviewCategory.DDD
-        "maintainability" -> ReviewCategory.MAINTAINABILITY
-        "missingtests", "missing_tests" -> ReviewCategory.MISSING_TESTS
-        "concurrency"   -> ReviewCategory.CONCURRENCY
-        else            -> ReviewCategory.CLEAN_CODE
+    private fun parseCategory(s: String): ReviewCategory {
+        val v = s.lowercase()
+        return when {
+            v.contains("security")                       -> ReviewCategory.SECURITY
+            v.contains("perf")                           -> ReviewCategory.PERFORMANCE
+            v.contains("async") || v.contains("await") ||
+                v.contains("concurren") || v.contains("thread") -> ReviewCategory.CONCURRENCY
+            v.contains("ddd")                            -> ReviewCategory.DDD
+            v.contains("solid") || v.contains("dip") || v.contains("srp") -> ReviewCategory.SOLID
+            v.contains("test")                           -> ReviewCategory.MISSING_TESTS
+            v.contains("maintain")                       -> ReviewCategory.MAINTAINABILITY
+            // Bugs: null safety, EF Core, DI lifetime, exception handling all describe defects.
+            v.contains("null") || v.contains("ef ") || v.contains("efcore") ||
+                v.contains("ef core") || v.contains("lifetime") || v.contains("dispos") ||
+                v.contains("exception") || v.contains("bug")     -> ReviewCategory.BUG
+            v.contains("naming") || v.contains("clean") || v.contains("style") -> ReviewCategory.CLEAN_CODE
+            else                                         -> ReviewCategory.CLEAN_CODE
+        }
     }
 }

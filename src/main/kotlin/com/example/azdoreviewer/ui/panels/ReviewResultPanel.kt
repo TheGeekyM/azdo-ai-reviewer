@@ -175,8 +175,10 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
                         postAllBtn.isEnabled = enable
                         postSelBtn.isEnabled = enable
                         statusLabel.text = if (found.isEmpty())
-                            "✓ Review complete — no issues found"
-                        else "✓ ${found.size} issue(s) found"
+                            "✓ AI review complete — no issues found"
+                        else "✓ ${found.size} AI issue(s) found"
+                        // Kick off static analysis in the background; merge when ready.
+                        runAnalyzersInBackground()
                     },
                     onFailure = { e ->
                         detailPane.text = ""
@@ -184,6 +186,49 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
                         Messages.showErrorDialog(project, e.message ?: "Unknown error", "AI Review Failed")
                     }
                 )
+            }
+        }
+    }
+
+    /**
+     * Runs Roslyn static analysis on the changed C# files in the background and merges
+     * its findings into the list when ready — without blocking the AI results already shown.
+     */
+    private fun runAnalyzersInBackground() {
+        // Build (display path -> local absolute path) for changed files we can find locally.
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val diffs = runCatching { service<com.example.azdoreviewer.application.PrService>().getPrDiffs(pr.id) }
+                .getOrDefault(emptyList())
+            val localMap = HashMap<String, String>()
+            for (d in diffs) {
+                if (!d.path.endsWith(".cs", true)) continue
+                val vf = com.intellij.openapi.application.ReadAction.nonBlocking<com.intellij.openapi.vfs.VirtualFile?> {
+                    findFileInProject(d.path)
+                }.inSmartMode(project).executeSynchronously()
+                if (vf != null) localMap[d.path] = vf.path
+            }
+            if (localMap.isEmpty()) return@executeOnPooledThread  // branch not checked out → AI-only, silently
+
+            ApplicationManager.getApplication().invokeLater {
+                statusLabel.text = "${comments.size} AI issue(s) — running static analysis…"
+            }
+            val analyzerFindings = runCatching { reviewService.runAnalyzers(localMap) }.getOrDefault(emptyList())
+
+            ApplicationManager.getApplication().invokeLater {
+                if (analyzerFindings.isEmpty()) {
+                    if (statusLabel.text.contains("running static analysis"))
+                        statusLabel.text = "${comments.size} issue(s) found"
+                    return@invokeLater
+                }
+                // Merge, de-duplicating analyzer findings that overlap an AI finding on the same line.
+                val existing = comments.map { it.file.substringAfterLast('/') + ":" + it.line }.toHashSet()
+                val fresh = analyzerFindings.filter {
+                    (it.file.substringAfterLast('/') + ":" + it.line) !in existing
+                }
+                comments = (comments + fresh).sortedWith(compareBy({ it.severity.ordinal }, { it.file }, { it.line }))
+                listModel.clear(); comments.forEach { listModel.addElement(it) }
+                buildSummary(comments)
+                statusLabel.text = "${comments.size} issue(s) — ${fresh.size} from static analysis"
             }
         }
     }
@@ -293,13 +338,17 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
         }
 
         add("${c.severity.label}  ·  ${c.category.label}\n", header)
+        if (c.title.isNotBlank()) add("${c.title.trim()}\n", style("ti", UIUtil.getLabelForeground(), true, 13))
         add("${c.file.substringAfterLast('/')}  :  line${if (c.endLine > c.line) "s" else ""} ${c.lineRange}\n\n", label)
 
         add("WHAT'S WRONG\n", style("s1", Color(0xCC7832), true))
         add("${c.comment.trim()}\n\n", body)
 
-        add("HOW TO FIX IT\n", style("s2", Color(0x6A8759), true))
-        add("${c.suggestion.trim()}\n", body)
+        // "How to fix" prose is optional in the new prompt; show it only if present.
+        if (c.suggestion.isNotBlank()) {
+            add("HOW TO FIX IT\n", style("s2", Color(0x6A8759), true))
+            add("${c.suggestion.trim()}\n", body)
+        }
 
         if (c.suggestedCode.isNotBlank()) {
             add("\nSUGGESTED CODE (replaces line${if (c.endLine > c.line) "s" else ""} ${c.lineRange})\n", style("s3", Color(0x6897BB), true))
@@ -604,13 +653,15 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
             }, BorderLayout.WEST)
 
             val center = JPanel().apply { layout = BoxLayout(this, BoxLayout.Y_AXIS); isOpaque = false }
-            center.add(JLabel("${c.severity.label}  ·  ${c.category.label}").apply {
+            val sourceTag = if (c.source == ReviewComment.Source.ANALYZER) "  ⚙ analyzer" else ""
+            center.add(JLabel("${c.severity.label}  ·  ${c.category.label}$sourceTag").apply {
                 font = font.deriveFont(Font.BOLD, 12f)
                 foreground = if (isSelected) fg else severityColor(c.severity)
                 alignmentX = Component.LEFT_ALIGNMENT
             })
             center.add(Box.createVerticalStrut(2))
-            center.add(JLabel(c.comment.take(100) + if (c.comment.length > 100) "…" else "").apply {
+            val summary = c.title.ifBlank { c.comment }
+            center.add(JLabel(summary.take(100) + if (summary.length > 100) "…" else "").apply {
                 foreground = fg
                 font = font.deriveFont(12f)
                 alignmentX = Component.LEFT_ALIGNMENT
