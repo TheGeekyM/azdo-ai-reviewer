@@ -1,0 +1,16 @@
+# Gradle / build
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IntelliJ / Rider
+.idea/
+*.iml
+out/
+
+# OS
+.DS_Store
+
+# Local secrets (never commit tokens/keys)
+*.local
+local.properties

@@ -1,0 +1,54 @@
+<idea-plugin>
+    <id>com.example.azdo-ai-reviewer</id>
+    <name>Azure DevOps AI Reviewer</name>
+    <vendor email="thegeekym@gmail.com">Mohamed Emad</vendor>
+    <description><![CDATA[
+        AI-powered code review for Azure DevOps pull requests inside Rider.<br/>
+        Supports Claude, OpenAI, Gemini, and local LLMs via Ollama.<br/>
+        <ul>
+            <li>Browse PRs assigned to you</li>
+            <li>View changed files and diffs</li>
+            <li>Run AI code review on any PR</li>
+            <li>Post comments back to Azure DevOps</li>
+        </ul>
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <toolWindow id="AzDO PR Reviewer"
+                    anchor="right"
+                    canCloseContents="true"
+                    factoryClass="com.example.azdoreviewer.ui.PrToolWindowFactory"
+                    icon="/META-INF/pluginIcon.svg"/>
+
+        <applicationService
+                serviceInterface="com.example.azdoreviewer.settings.AzdoSettings"
+                serviceImplementation="com.example.azdoreviewer.settings.AzdoSettings"/>
+
+        <applicationService
+                serviceInterface="com.example.azdoreviewer.infrastructure.cache.PrCacheService"
+                serviceImplementation="com.example.azdoreviewer.infrastructure.cache.PrCacheService"/>
+
+        <applicationService
+                serviceInterface="com.example.azdoreviewer.application.PrService"
+                serviceImplementation="com.example.azdoreviewer.application.PrService"/>
+
+        <applicationService
+                serviceInterface="com.example.azdoreviewer.application.ReviewService"
+                serviceImplementation="com.example.azdoreviewer.application.ReviewService"/>
+
+        <applicationService
+                serviceInterface="com.example.azdoreviewer.application.CommentService"
+                serviceImplementation="com.example.azdoreviewer.application.CommentService"/>
+
+        <applicationConfigurable
+                parentId="tools"
+                displayName="Azure DevOps AI Reviewer"
+                id="com.example.azdoreviewer.settings"
+                instance="com.example.azdoreviewer.settings.AzdoSettingsConfigurable"/>
+
+    </extensions>
+</idea-plugin>
