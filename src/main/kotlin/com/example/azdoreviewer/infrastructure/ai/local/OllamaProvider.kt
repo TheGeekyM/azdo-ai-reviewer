@@ -3,6 +3,7 @@ package com.example.azdoreviewer.infrastructure.ai.local
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.infrastructure.ai.AiReviewProvider
 import com.example.azdoreviewer.infrastructure.ai.FileReviewRequest
+import com.example.azdoreviewer.infrastructure.ai.PrReviewRequest
 import com.example.azdoreviewer.infrastructure.ai.PromptBuilder
 import com.example.azdoreviewer.infrastructure.ai.ReviewResponseParser
 import com.example.azdoreviewer.infrastructure.azdo.AiException
@@ -33,26 +34,26 @@ class OllamaProvider(
 
     override suspend fun reviewFile(request: FileReviewRequest): List<ReviewComment> =
         withContext(Dispatchers.IO) {
-            val prompt = PromptBuilder.build(request)
-            val body = json.encodeToString(OllamaRequest(
-                model  = model,
-                prompt = prompt,
-                stream = false
-            ))
-
-            val httpRequest = Request.Builder()
-                .url("$baseUrl/api/generate")
-                .post(body.toRequestBody("application/json".toMediaType()))
-                .build()
-
-            val raw = http.newCall(httpRequest).execute().use { r ->
-                if (!r.isSuccessful) throw AiException("Ollama error ${r.code}: ${r.message}")
-                r.body?.string() ?: throw AiException("Empty response from Ollama")
-            }
-
-            val content = json.decodeFromString<OllamaResponse>(raw).response
-            ReviewResponseParser.parse(content, request.filePath)
+            ReviewResponseParser.parse(generate(PromptBuilder.build(request)), request.filePath)
         }
+
+    override suspend fun reviewPullRequest(request: PrReviewRequest): List<ReviewComment> =
+        withContext(Dispatchers.IO) {
+            ReviewResponseParser.parse(generate(PromptBuilder.buildPr(request)), request.files.firstOrNull()?.path ?: "")
+        }
+
+    private fun generate(prompt: String): String {
+        val body = json.encodeToString(OllamaRequest(model = model, prompt = prompt, stream = false))
+        val httpRequest = Request.Builder()
+            .url("$baseUrl/api/generate")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .build()
+        val raw = http.newCall(httpRequest).execute().use { r ->
+            if (!r.isSuccessful) throw AiException("Ollama error ${r.code}: ${r.message}")
+            r.body?.string() ?: throw AiException("Empty response from Ollama")
+        }
+        return json.decodeFromString<OllamaResponse>(raw).response
+    }
 
     override suspend fun ping(): String = withContext(Dispatchers.IO) {
         val body = json.encodeToString(OllamaRequest(model = model, prompt = "Reply with OK", stream = false))

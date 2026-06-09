@@ -22,6 +22,10 @@ class PrService {
         return cache.getPrList(cacheKey()) { client.fetchAssignedPrs() }
     }
 
+    /** Returns the PR's metadata (title/description/branches) from the cached list, or null. */
+    fun getPr(prId: Int): PullRequest? =
+        runCatching { getAssignedPrs() }.getOrDefault(emptyList()).firstOrNull { it.id == prId }
+
     fun getPrDiffs(prId: Int, forceRefresh: Boolean = false): List<FileDiff> {
         if (forceRefresh) cache.invalidatePr(prId)
         // Ensure the client's PR->repo map is populated (it may be empty after an IDE restart
@@ -45,6 +49,18 @@ class PrService {
     fun createCommentThread(prId: Int, request: com.example.azdoreviewer.infrastructure.azdo.dto.CommentThreadRequest) {
         if (!client.knowsPr(prId)) client.fetchAssignedPrs()
         client.createCommentThread(prId, request)
+    }
+
+    /** Sets the current user's vote on the PR (10 = approved). */
+    fun votePr(prId: Int, vote: Int) {
+        if (!client.knowsPr(prId)) client.fetchAssignedPrs()
+        client.votePr(prId, vote)
+    }
+
+    /** Completes (merges) the PR. */
+    fun completePr(prId: Int) {
+        if (!client.knowsPr(prId)) client.fetchAssignedPrs()
+        client.completePr(prId)
     }
 
     private fun cacheKey(): String = settings.state.organizationUrl

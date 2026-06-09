@@ -3,6 +3,7 @@ package com.example.azdoreviewer.infrastructure.ai.openai
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.infrastructure.ai.AiReviewProvider
 import com.example.azdoreviewer.infrastructure.ai.FileReviewRequest
+import com.example.azdoreviewer.infrastructure.ai.PrReviewRequest
 import com.example.azdoreviewer.infrastructure.ai.PromptBuilder
 import com.example.azdoreviewer.infrastructure.ai.ReviewResponseParser
 import com.example.azdoreviewer.infrastructure.azdo.AiException
@@ -33,29 +34,32 @@ class OpenAiProvider(
 
     override suspend fun reviewFile(request: FileReviewRequest): List<ReviewComment> =
         withContext(Dispatchers.IO) {
-            val prompt = PromptBuilder.build(request)
-            val body = json.encodeToString(OpenAiRequest(
-                model    = model,
-                messages = listOf(OpenAiMessage(role = "user", content = prompt))
-            ))
-
-            val httpRequest = Request.Builder()
-                .url("https://api.openai.com/v1/chat/completions")
-                .post(body.toRequestBody("application/json".toMediaType()))
-                .header("Authorization", "Bearer $apiKey")
-                .build()
-
-            val raw = http.newCall(httpRequest).execute().use { r ->
-                if (!r.isSuccessful) throw AiException("OpenAI error ${r.code}: ${r.message}")
-                r.body?.string() ?: throw AiException("Empty response from OpenAI")
-            }
-
-            val content = json.decodeFromString<OpenAiResponse>(raw)
-                .choices.firstOrNull()?.message?.content
-                ?: return@withContext emptyList()
-
+            val content = chat(PromptBuilder.build(request)) ?: return@withContext emptyList()
             ReviewResponseParser.parse(content, request.filePath)
         }
+
+    override suspend fun reviewPullRequest(request: PrReviewRequest): List<ReviewComment> =
+        withContext(Dispatchers.IO) {
+            val content = chat(PromptBuilder.buildPr(request)) ?: return@withContext emptyList()
+            ReviewResponseParser.parse(content, request.files.firstOrNull()?.path ?: "")
+        }
+
+    private fun chat(prompt: String): String? {
+        val body = json.encodeToString(OpenAiRequest(
+            model    = model,
+            messages = listOf(OpenAiMessage(role = "user", content = prompt))
+        ))
+        val httpRequest = Request.Builder()
+            .url("https://api.openai.com/v1/chat/completions")
+            .post(body.toRequestBody("application/json".toMediaType()))
+            .header("Authorization", "Bearer $apiKey")
+            .build()
+        val raw = http.newCall(httpRequest).execute().use { r ->
+            if (!r.isSuccessful) throw AiException("OpenAI error ${r.code}: ${r.message}")
+            r.body?.string() ?: throw AiException("Empty response from OpenAI")
+        }
+        return json.decodeFromString<OpenAiResponse>(raw).choices.firstOrNull()?.message?.content
+    }
 
     override suspend fun ping(): String = withContext(Dispatchers.IO) {
         val body = json.encodeToString(OpenAiRequest(

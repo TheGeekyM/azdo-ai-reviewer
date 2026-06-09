@@ -54,12 +54,18 @@ class RoslynAnalyzerRunner {
         }
         val out = File.createTempFile("azdo-roslyn", ".sarif")
         return try {
-            val cmd = listOf(
+            val cmd = mutableListOf(
                 roslynator(), "analyze", projectOrSolution.absolutePath,
                 "--output", out.absolutePath,
                 "--severity-level", "info",
                 "--verbosity", "quiet"
             )
+            // Load the bundled Sonar / SecurityCodeScan / Roslynator analyzers (verified to work).
+            val analyzerDlls = extractBundledAnalyzers()
+            if (analyzerDlls.isNotEmpty()) {
+                cmd.add("--analyzer-assemblies")
+                cmd.addAll(analyzerDlls.map { it.absolutePath })
+            }
             val r = runProcess(cmd, projectOrSolution.parentFile ?: File("."), timeoutSec)
             if (r.exitCode != 0 && !out.exists()) {
                 log.warn("roslynator analyze failed (${r.exitCode}): ${r.output.take(500)}")
@@ -112,15 +118,47 @@ class RoslynAnalyzerRunner {
     private fun toolExists(): Boolean =
         File("${System.getProperty("user.home")}/.dotnet/tools/roslynator").exists()
 
+    /**
+     * Extracts the bundled analyzer DLLs (Sonar, SecurityCodeScan, Roslynator) from plugin
+     * resources to a cached temp dir and returns the entry-point analyzer assemblies to load.
+     * All DLLs (incl. dependencies) are extracted to the same dir so they resolve.
+     */
+    private fun extractBundledAnalyzers(): List<File> {
+        return runCatching {
+            val dir = File(System.getProperty("java.io.tmpdir"), "azdo-analyzers").apply { mkdirs() }
+            val index = readResource("/analyzers/index.txt")?.lines()?.map { it.trim() }?.filter { it.isNotBlank() }
+                ?: return emptyList()
+            val load = readResource("/analyzers/load.txt")?.lines()?.map { it.trim() }?.filter { it.isNotBlank() }
+                ?: emptyList()
+
+            for (name in index) {
+                val target = File(dir, name)
+                if (target.exists() && target.length() > 0) continue
+                javaClass.getResourceAsStream("/analyzers/$name")?.use { ins ->
+                    target.outputStream().use { ins.copyTo(it) }
+                }
+            }
+            load.map { File(dir, it) }.filter { it.exists() }
+        }.getOrElse {
+            log.warn("Could not extract bundled analyzers: ${it.message}")
+            emptyList()
+        }
+    }
+
+    private fun readResource(path: String): String? =
+        javaClass.getResourceAsStream(path)?.bufferedReader()?.use { it.readText() }
+
     companion object {
         /** Maps a CA/analyzer rule id to our category + a sensible severity floor. */
         fun toReviewComment(d: AnalyzerDiagnostic, fileForDisplay: String): ReviewComment {
-            val sev = when (d.severity.lowercase()) {
-                "error"   -> Severity.HIGH
-                "warning" -> Severity.MEDIUM
-                else      -> Severity.LOW
-            }
             val category = categoryForRule(d.ruleId)
+            // Security findings (SCS, Sonar security S2076/S2078/S3649/S5131...) are never trivial.
+            val sev = when {
+                category == ReviewCategory.SECURITY -> Severity.HIGH
+                d.severity.equals("error", true)    -> Severity.HIGH
+                d.severity.equals("warning", true)  -> Severity.MEDIUM
+                else                                -> Severity.LOW
+            }
             return ReviewComment(
                 file        = fileForDisplay,
                 line        = d.line,
@@ -137,12 +175,22 @@ class RoslynAnalyzerRunner {
         private fun friendly(d: AnalyzerDiagnostic): String =
             "Static analysis flagged this (${d.ruleId}): ${d.message} — worth a quick look."
 
+        // Sonar security rules (S-prefixed) that should be treated as Security.
+        private val SONAR_SECURITY = setOf(
+            "S2076", "S2078", "S3649", "S2083", "S5131", "S5146", // injection / XSS / path traversal
+            "S2068", "S2070", "S4790", "S5547", "S2245",          // weak crypto / hardcoded creds
+            "S4830", "S4423", "S5542", "S2092", "S3330"           // TLS / cookie / cert
+        )
+
         private fun categoryForRule(id: String): ReviewCategory = when {
-            id.startsWith("CA21") || id.startsWith("CA30") || id.startsWith("CA53") || id.startsWith("SCS") -> ReviewCategory.SECURITY
+            id in SONAR_SECURITY || id.startsWith("SCS") ||
+                id.startsWith("CA21") || id.startsWith("CA30") || id.startsWith("CA53") -> ReviewCategory.SECURITY
             id.startsWith("CA18") || id.startsWith("CA20") -> ReviewCategory.PERFORMANCE
-            id.startsWith("CA22") -> ReviewCategory.CONCURRENCY
-            id.startsWith("CA1063") || id.startsWith("CA2000") -> ReviewCategory.BUG // IDisposable
+            id.startsWith("CA22") || id == "S2551" || id == "S2095" -> ReviewCategory.CONCURRENCY
+            id.startsWith("CA1063") || id.startsWith("CA2000") || id == "S2589" || id == "S2259" -> ReviewCategory.BUG
             id.startsWith("EF") -> ReviewCategory.PERFORMANCE
+            // Roslynator RCS rules are mostly clean-code / readability refactorings.
+            id.startsWith("RCS") -> ReviewCategory.CLEAN_CODE
             else -> ReviewCategory.CLEAN_CODE
         }
     }

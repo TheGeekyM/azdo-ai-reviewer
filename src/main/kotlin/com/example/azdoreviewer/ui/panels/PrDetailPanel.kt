@@ -1,14 +1,20 @@
 package com.example.azdoreviewer.ui.panels
 
 import com.example.azdoreviewer.domain.PullRequest
+import com.example.azdoreviewer.ui.GitCheckoutHelper
+import com.intellij.icons.AllIcons
+import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTabbedPane
 import com.intellij.ui.components.JBTextArea
 import java.awt.BorderLayout
+import java.awt.FlowLayout
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.awt.Insets
+import java.awt.datatransfer.StringSelection
+import javax.swing.JButton
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
@@ -32,19 +38,41 @@ class PrDetailPanel(private val project: Project, private val pr: PullRequest) {
             anchor = GridBagConstraints.WEST
         }
 
-        fun addRow(label: String, value: String, row: Int) {
+        fun iconButton(icon: javax.swing.Icon, tip: String, action: () -> Unit) =
+            JButton(icon).apply {
+                toolTipText = tip
+                isContentAreaFilled = false
+                isBorderPainted = false
+                isFocusPainted = false
+                margin = Insets(0, 0, 0, 0)
+                addActionListener { action() }
+            }
+
+        fun addRow(label: String, value: String, row: Int, copyable: Boolean = false, checkoutable: Boolean = false) {
             gbc.gridx = 0; gbc.gridy = row; gbc.weightx = 0.0; gbc.fill = GridBagConstraints.NONE
             panel.add(JLabel("<html><b>$label</b></html>"), gbc)
             gbc.gridx = 1; gbc.weightx = 1.0; gbc.fill = GridBagConstraints.HORIZONTAL
-            panel.add(JLabel(value), gbc)
+            if (copyable || checkoutable) {
+                val cell = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0)).apply { isOpaque = false }
+                cell.add(JLabel(value))
+                if (copyable) cell.add(iconButton(AllIcons.Actions.Copy, "Copy '$value'") {
+                    CopyPasteManager.getInstance().setContents(StringSelection(value))
+                })
+                if (checkoutable) cell.add(iconButton(AllIcons.Vcs.Branch, "Checkout '$value'") {
+                    GitCheckoutHelper.checkout(project, value)
+                })
+                panel.add(cell, gbc)
+            } else {
+                panel.add(JLabel(value), gbc)
+            }
         }
 
         addRow("PR ID:",      "#${pr.id}",              0)
         addRow("Title:",      pr.title,                 1)
         addRow("Author:",     pr.authorDisplayName,     2)
         addRow("Status:",     pr.status.name,           3)
-        addRow("Source:",     pr.sourceBranch,          4)
-        addRow("Target:",     pr.targetBranch,          5)
+        addRow("Source:",     pr.sourceBranch,          4, copyable = true, checkoutable = true)
+        addRow("Target:",     pr.targetBranch,          5, copyable = true)
         addRow("Created:",    pr.createdAt,             6)
 
         // Description

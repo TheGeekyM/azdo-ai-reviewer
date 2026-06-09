@@ -2,6 +2,7 @@ package com.example.azdoreviewer.ui.panels
 
 import com.example.azdoreviewer.application.CommentService
 import com.example.azdoreviewer.application.ReviewService
+import com.example.azdoreviewer.ui.WrapLayout
 import com.example.azdoreviewer.domain.PullRequest
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.domain.Severity
@@ -42,8 +43,8 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
     private val panel       = JPanel(BorderLayout())
 
     private lateinit var runBtn: JButton
-    private lateinit var postAllBtn: JButton
     private lateinit var postSelBtn: JButton
+    private lateinit var approveBtn: JButton
     private lateinit var fixBtn: JButton
 
     // ── Loading animation ─────────────────────────────────────────────────────
@@ -116,7 +117,8 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
     fun getComponent(): JComponent = panel
 
     private fun buildToolbar(): JComponent {
-        val bar = JPanel(FlowLayout(FlowLayout.LEFT, 4, 4))
+        // WrapLayout = FlowLayout that wraps to new rows when narrow, so buttons never disappear.
+        val bar = JPanel(WrapLayout(FlowLayout.LEFT, 4, 4))
 
         runBtn = JButton("Run AI Review", AllIcons.Actions.Execute).apply {
             addActionListener { runReview(false) }
@@ -124,23 +126,23 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
         val rerunBtn = JButton("Re-run", AllIcons.Actions.Refresh).apply {
             addActionListener { runReview(true) }
         }
-        postAllBtn = JButton("Post All to PR", AllIcons.Vcs.Push).apply {
-            isEnabled = false
-            addActionListener { postAll() }
-        }
         postSelBtn = JButton("Post Selected", AllIcons.Actions.Commit).apply {
             isEnabled = false
             addActionListener { postSelected() }
+        }
+        // Dropdown: Approve / Reject / Complete
+        approveBtn = JButton("Vote ▾", AllIcons.Actions.Checked).apply {
+            toolTipText = "Approve, reject, or complete this pull request"
+            addActionListener { showVoteMenu(this) }
         }
         val openBtn = JButton("Open in Editor", AllIcons.Actions.EditSource).apply {
             addActionListener { issueList.selectedValue?.let { openInEditor(it) } }
         }
 
         bar.add(runBtn); bar.add(rerunBtn)
-        bar.add(JSeparator(SwingConstants.VERTICAL))
         bar.add(openBtn)
-        bar.add(JSeparator(SwingConstants.VERTICAL))
-        bar.add(postAllBtn); bar.add(postSelBtn)
+        bar.add(postSelBtn)
+        bar.add(approveBtn)
         return bar
     }
 
@@ -171,9 +173,7 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
                         comments = found
                         found.forEach { listModel.addElement(it) }
                         buildSummary(found)
-                        val enable = found.isNotEmpty()
-                        postAllBtn.isEnabled = enable
-                        postSelBtn.isEnabled = enable
+                        postSelBtn.isEnabled = found.isNotEmpty()
                         statusLabel.text = if (found.isEmpty())
                             "✓ AI review complete — no issues found"
                         else "✓ ${found.size} AI issue(s) found"
@@ -266,22 +266,58 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
         summaryBar.revalidate(); summaryBar.repaint()
     }
 
-    private fun postAll() {
-        if (comments.isEmpty()) return
-        if (Messages.showYesNoDialog(project,
-                "Post all ${comments.size} comments to PR #${pr.id}?",
-                "Post to Azure DevOps", Messages.getQuestionIcon()) != Messages.YES) return
+    private fun showVoteMenu(anchor: JComponent) {
+        val menu = JPopupMenu()
+        menu.add(JMenuItem("Approve", AllIcons.Actions.Checked).apply {
+            addActionListener { vote("Approve", 10) }
+        })
+        menu.add(JMenuItem("Approve with suggestions", AllIcons.General.InspectionsOK).apply {
+            addActionListener { vote("Approve with suggestions", 5) }
+        })
+        menu.add(JMenuItem("Wait for author", AllIcons.General.Warning).apply {
+            addActionListener { vote("Wait for author", -5) }
+        })
+        menu.add(JMenuItem("Reject", AllIcons.Actions.Cancel).apply {
+            addActionListener { vote("Reject", -10) }
+        })
+        menu.addSeparator()
+        menu.add(JMenuItem("Complete (merge) PR", AllIcons.Actions.Commit).apply {
+            addActionListener { completePr() }
+        })
+        menu.show(anchor, 0, anchor.height)
+    }
 
+    private fun vote(label: String, value: Int) {
+        if (Messages.showYesNoDialog(project,
+                "$label — set your vote on PR #${pr.id}?",
+                "$label Pull Request", label, "Cancel", Messages.getQuestionIcon()) != Messages.YES) return
+        runOnPr("Voting ($label)…") {
+            commentService.votePr(pr.id, value)
+            "✓ $label set on PR #${pr.id}"
+        }
+    }
+
+    private fun completePr() {
+        if (Messages.showYesNoDialog(project,
+                "Complete (merge) PR #${pr.id}?\n\nThis merges the source branch into the target in Azure DevOps.",
+                "Complete Pull Request", "Complete", "Cancel", Messages.getWarningIcon()) != Messages.YES) return
+        runOnPr("Completing…") {
+            commentService.completePr(pr.id)
+            "✓ Completed PR #${pr.id}"
+        }
+    }
+
+    /** Runs a PR action off the EDT with progress + status reporting. */
+    private fun runOnPr(busyText: String, action: () -> String) {
         progress.isVisible = true
-        statusLabel.text = "Posting comments…"
+        statusLabel.text = busyText
+        approveBtn.isEnabled = false
         ApplicationManager.getApplication().executeOnPooledThread {
-            val r = runCatching { commentService.postAllComments(pr.id, comments) }
+            val r = runCatching { action() }
             ApplicationManager.getApplication().invokeLater {
                 progress.isVisible = false
-                statusLabel.text = r.fold(
-                    { "✓ All comments posted to PR #${pr.id}" },
-                    { "✗ Failed: ${it.message}" }
-                )
+                approveBtn.isEnabled = true
+                statusLabel.text = r.fold({ it }, { "✗ Failed: ${it.message}" })
             }
         }
     }

@@ -1,0 +1,13 @@
+Google.Protobuf.dll
+Roslynator_Analyzers_Roslynator.Common.dll
+Roslynator_Analyzers_Roslynator.Core.dll
+Roslynator_Analyzers_Roslynator.CSharp.dll
+Roslynator_Analyzers_Roslynator.CSharp.Workspaces.dll
+Roslynator_Analyzers_Roslynator.Workspaces.Common.dll
+Roslynator_Analyzers_Roslynator.Workspaces.Core.dll
+Roslynator.CSharp.Analyzers.CodeFixes.dll
+Roslynator.CSharp.Analyzers.dll
+SonarAnalyzer.CFG.dll
+SonarAnalyzer.CSharp.dll
+SonarAnalyzer.dll
+SonarAnalyzer.ShimLayer.dll

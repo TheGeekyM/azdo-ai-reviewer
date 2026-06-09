@@ -40,6 +40,12 @@ class CommentService {
         postSummary(prId, comments)
     }
 
+    /** Sets the current user's vote (10 approve, 5 approve+suggestions, -5 wait, -10 reject). */
+    fun votePr(prId: Int, vote: Int) = prService.votePr(prId, vote)
+
+    /** Completes (merges) the PR. */
+    fun completePr(prId: Int) = prService.completePr(prId)
+
     fun postSummary(prId: Int, comments: List<ReviewComment>) {
         prService.createCommentThread(prId, CommentThreadRequest(
             comments = listOf(CommentRequest(content = buildSummary(comments))),

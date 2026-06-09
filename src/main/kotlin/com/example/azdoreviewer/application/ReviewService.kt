@@ -3,7 +3,8 @@ package com.example.azdoreviewer.application
 import com.example.azdoreviewer.domain.ChangeType
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.infrastructure.ai.AiProviderFactory
-import com.example.azdoreviewer.infrastructure.ai.FileReviewRequest
+import com.example.azdoreviewer.infrastructure.ai.PrFile
+import com.example.azdoreviewer.infrastructure.ai.PrReviewRequest
 import com.example.azdoreviewer.infrastructure.analyzer.RoslynAnalyzerRunner
 import com.example.azdoreviewer.infrastructure.cache.PrCacheService
 import com.example.azdoreviewer.settings.AzdoSettings
@@ -25,9 +26,8 @@ class ReviewService {
     fun reviewPr(prId: Int, forceRefresh: Boolean = false): List<ReviewComment> {
         if (forceRefresh) cache.invalidatePr(prId)
 
-        // NOTE: not cached here — we want errors to surface, and caching empty error
-        // results would hide a broken key on the next run.
         val provider = AiProviderFactory.create(settings)
+        val pr = prService.getPr(prId)
         val diffs = prService.getPrDiffs(prId)
             .filter { it.changeType != ChangeType.DELETE }
 
@@ -38,37 +38,47 @@ class ReviewService {
             )
         }
 
+        val language = dominantLanguage(diffs.map { it.path })
+
+        // Build PrFile list, then chunk so each request stays within a safe size budget.
+        val files = diffs.map { d ->
+            PrFile(
+                path            = d.path,
+                unifiedDiff     = d.toUnifiedDiff(),
+                fullFileContent = d.newContent.ifBlank { null }
+            )
+        }
+        val batches = chunkBySize(files)
+
         val errors = mutableListOf<String>()
         val results = runBlocking {
-            diffs.map { diff ->
+            batches.map { batch ->
                 async {
                     runCatching {
-                        provider.reviewFile(
-                            FileReviewRequest(
-                                filePath        = diff.path,
-                                unifiedDiff     = diff.toUnifiedDiff(),
-                                // Pass the full new file so the AI understands how the change fits
-                                // (the prompt instructs it to review ONLY the changed +lines).
-                                fullFileContent = diff.newContent.ifBlank { null },
-                                language        = detectLanguage(diff.path)
+                        provider.reviewPullRequest(
+                            PrReviewRequest(
+                                prTitle       = pr?.title ?: "PR #$prId",
+                                prDescription = pr?.description ?: "",
+                                language      = language,
+                                files         = batch
                             )
                         )
                     }.getOrElse { e ->
-                        thisLogger().warn("Review failed for ${diff.path}: ${e.message}")
-                        synchronized(errors) { errors.add("${diff.path.substringAfterLast('/')}: ${e.message}") }
+                        thisLogger().warn("PR review batch failed: ${e.message}")
+                        synchronized(errors) { errors.add(e.message ?: "unknown error") }
                         emptyList()
                     }
                 }
             }.awaitAll().flatten()
         }
 
-        // If EVERY file failed, the API/key is broken — surface the first error instead of "no issues".
+        // If everything failed, surface the real error instead of "no issues".
         if (results.isEmpty() && errors.isNotEmpty()) {
-            throw IllegalStateException("AI review failed on all files.\n\nFirst error:\n${errors.first()}")
+            throw IllegalStateException("AI review failed.\n\n${errors.first()}")
         }
 
         val sorted = results.sortedWith(compareBy({ it.severity.ordinal }, { it.file }, { it.line }))
-        cache.invalidatePr(prId) // ensure fresh next time
+        cache.invalidatePr(prId)
         return sorted
     }
 
@@ -120,6 +130,11 @@ class ReviewService {
         return firstSln
     }
 
+    /** Lists model IDs the configured provider/account can use. Empty on failure. */
+    fun listModels(): List<String> = runCatching {
+        runBlocking { AiProviderFactory.create(settings).listModels() }
+    }.getOrDefault(emptyList())
+
     /** Sends a tiny request to verify the AI key/model works. Throws with the real reason on failure. */
     fun testAiConnection(): String {
         val provider = AiProviderFactory.create(settings)
@@ -127,6 +142,31 @@ class ReviewService {
             provider.ping()
             "✓ ${settings.state.aiProvider} key works (model: ${settings.state.aiModel.ifBlank { "default" }})"
         }
+    }
+
+    /** The most common language among the changed files (drives which prompt to use). */
+    private fun dominantLanguage(paths: List<String>): String =
+        paths.map { detectLanguage(it) }
+            .groupingBy { it }.eachCount()
+            .maxByOrNull { it.value }?.key ?: "text"
+
+    /**
+     * Splits files into batches that fit a safe per-request character budget, so big PRs
+     * don't blow the model's context. Each batch is reviewed in one call.
+     */
+    private fun chunkBySize(files: List<PrFile>, maxCharsPerBatch: Int = 45_000): List<List<PrFile>> {
+        val batches = mutableListOf<MutableList<PrFile>>()
+        var current = mutableListOf<PrFile>()
+        var size = 0
+        for (f in files) {
+            val cost = f.unifiedDiff.length + (f.fullFileContent?.length ?: 0)
+            if (current.isNotEmpty() && size + cost > maxCharsPerBatch) {
+                batches.add(current); current = mutableListOf(); size = 0
+            }
+            current.add(f); size += cost
+        }
+        if (current.isNotEmpty()) batches.add(current)
+        return batches
     }
 
     private fun detectLanguage(path: String): String = when (path.substringAfterLast('.').lowercase()) {

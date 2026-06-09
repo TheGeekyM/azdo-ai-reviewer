@@ -24,6 +24,18 @@ class AzdoSettingsConfigurable : Configurable {
 
     private val settings = AzdoSettings.getInstance()
 
+    companion object {
+        // Sensible defaults shown before (or instead of) loading the live list. Blank = provider default.
+        private val DEFAULT_MODELS = arrayOf(
+            "",
+            "claude-opus-4-8",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "gpt-4o",
+            "llama3"
+        )
+    }
+
     // Azure DevOps
     private val serverUrlField  = JBTextField().apply { toolTipText = "e.g. https://your-server.example.com/DefaultCollection/MyProject/_git/MyRepo" }
     private val tokenField      = JBPasswordField()
@@ -33,7 +45,11 @@ class AzdoSettingsConfigurable : Configurable {
 
     // AI
     private val aiProviderCombo = ComboBox(arrayOf("claude", "openai", "gemini", "ollama"))
-    private val aiModelField    = JBTextField()
+    // Editable combo: pick a known model or type a custom ID. "Load models" fills it from the API.
+    private val aiModelCombo    = ComboBox(DEFAULT_MODELS).apply { isEditable = true }
+    private val loadModelsBtn   = JButton("Load models")
+    private fun modelText(): String = (aiModelCombo.editor.item?.toString() ?: "").trim()
+    private fun setModelText(v: String) { aiModelCombo.selectedItem = v }
     private val aiKeyField      = JBPasswordField()
     private val getKeyBtn       = JButton("Get API Key")
     private val testAiBtn       = JButton("Test AI Key")
@@ -104,8 +120,11 @@ class AzdoSettingsConfigurable : Configurable {
 
         c.gridx = 0; c.gridy = row; c.gridwidth = 1; c.weightx = 0.0
         panel.add(lbl("Model"), c)
-        c.gridx = 1; c.gridwidth = 2; c.weightx = 1.0
-        panel.add(aiModelField, c)
+        c.gridx = 1; c.gridwidth = 1; c.weightx = 1.0
+        panel.add(aiModelCombo, c)
+        c.gridx = 2; c.weightx = 0.0
+        loadModelsBtn.addActionListener { onLoadModels() }
+        panel.add(loadModelsBtn, c)
         row++
 
         c.gridx = 0; c.gridy = row; c.gridwidth = 1; c.weightx = 0.0
@@ -197,6 +216,28 @@ class AzdoSettingsConfigurable : Configurable {
         aiStatusLabel.text = "Signed out — using API key"
     }
 
+    private fun onLoadModels() {
+        apply() // persist key/provider so the API call is authenticated
+        val current = modelText()
+        loadModelsBtn.isEnabled = false
+        aiStatusLabel.text = "Loading models…"
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val models = service<ReviewService>().listModels()
+            ApplicationManager.getApplication().invokeLater {
+                loadModelsBtn.isEnabled = true
+                if (models.isEmpty()) {
+                    aiStatusLabel.text = "Couldn't load models (check key/provider)"
+                    return@invokeLater
+                }
+                // Keep a blank first entry (= provider default), then the live list.
+                val items = (listOf("") + models).toTypedArray()
+                aiModelCombo.model = javax.swing.DefaultComboBoxModel(items)
+                setModelText(if (current.isNotBlank() && models.contains(current)) current else "")
+                aiStatusLabel.text = "✓ Loaded ${models.size} model(s)"
+            }
+        }
+    }
+
     private fun onTestAi() {
         apply() // save key + provider + model first
         aiStatusLabel.text = "Testing…"
@@ -256,7 +297,7 @@ class AzdoSettingsConfigurable : Configurable {
         val s = settings.state
         return serverUrlField.text != s.repoUrl ||
                aiProviderCombo.selectedItem != s.aiProvider ||
-               aiModelField.text != s.aiModel ||
+               modelText() != s.aiModel ||
                (maxFilesSpinner.value as Int) != s.maxFilesPerReview ||
                String(tokenField.password).isNotEmpty() ||
                String(aiKeyField.password).isNotEmpty()
@@ -266,7 +307,7 @@ class AzdoSettingsConfigurable : Configurable {
         val s = settings.state
         settings.parseAndSaveRepoUrl(serverUrlField.text)
         s.aiProvider        = aiProviderCombo.selectedItem as String
-        s.aiModel           = aiModelField.text.trim()
+        s.aiModel           = modelText()
         s.maxFilesPerReview = maxFilesSpinner.value as Int
 
         String(tokenField.password).takeIf { it.isNotEmpty() && it != "••••••••••••••••" }?.let {
@@ -282,7 +323,7 @@ class AzdoSettingsConfigurable : Configurable {
         val s = settings.state
         serverUrlField.text  = s.repoUrl.ifBlank { s.organizationUrl }
         aiProviderCombo.selectedItem = s.aiProvider
-        aiModelField.text    = s.aiModel
+        setModelText(s.aiModel)
         maxFilesSpinner.value = s.maxFilesPerReview
         tokenField.text = if (settings.getPat() != null) "••••••••••••••••" else ""
         aiKeyField.text = if (settings.getAiApiKey() != null) "••••••••••••••••" else ""

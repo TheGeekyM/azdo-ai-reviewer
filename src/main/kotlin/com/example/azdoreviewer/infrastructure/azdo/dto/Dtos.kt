@@ -113,6 +113,11 @@ data class CommitRefDto(
 )
 
 @Serializable
+data class PrCompletionDto(
+    @SerialName("lastMergeSourceCommit") val lastMergeSourceCommit: CommitRefDto? = null
+)
+
+@Serializable
 data class IterationChangesResponse(
     @SerialName("changeEntries") val changeEntries: List<ChangeEntryDto> = emptyList()
 )

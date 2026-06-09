@@ -189,9 +189,49 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
         }
     }
 
+    override fun votePr(prId: Int, vote: Int) {
+        val (project, repoId) = prRepoMap[prId] ?: throw AzdoException.NotFound("PR $prId not in current list. Refresh first.")
+        val userId = getCurrentUserId()
+        put(
+            "$base/$project/_apis/git/repositories/$repoId/pullrequests/$prId/reviewers/$userId?$v",
+            """{"vote": $vote}"""
+        )
+    }
+
+    override fun completePr(prId: Int) {
+        val (project, repoId) = prRepoMap[prId] ?: throw AzdoException.NotFound("PR $prId not in current list. Refresh first.")
+        val prUrl = "$base/$project/_apis/git/repositories/$repoId/pullrequests/$prId?$v"
+        // Need lastMergeSourceCommit to complete.
+        val pr = json.decodeFromString<PrCompletionDto>(get(prUrl))
+        val commitId = pr.lastMergeSourceCommit?.commitId
+            ?: throw AzdoException.ApiError(409, "PR has no merge commit yet (conflicts or not ready to merge).")
+
+        patch(prUrl, """{"status":"completed","lastMergeSourceCommit":{"commitId":"$commitId"}}""")
+    }
+
     private fun post(url: String, body: String): String {
         val reqBody = body.toRequestBody("application/json".toMediaType())
         val request = Request.Builder().url(url).post(reqBody).build()
+        val response = http.newCall(request).execute()
+        return response.use { r ->
+            if (!r.isSuccessful) throw AzdoException.ApiError(r.code, "HTTP ${r.code}\nURL: $url\n${r.message}")
+            r.body?.string() ?: ""
+        }
+    }
+
+    private fun put(url: String, body: String): String {
+        val reqBody = body.toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(url).put(reqBody).build()
+        val response = http.newCall(request).execute()
+        return response.use { r ->
+            if (!r.isSuccessful) throw AzdoException.ApiError(r.code, "HTTP ${r.code}\nURL: $url\n${r.message}")
+            r.body?.string() ?: ""
+        }
+    }
+
+    private fun patch(url: String, body: String): String {
+        val reqBody = body.toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(url).patch(reqBody).build()
         val response = http.newCall(request).execute()
         return response.use { r ->
             if (!r.isSuccessful) throw AzdoException.ApiError(r.code, "HTTP ${r.code}\nURL: $url\n${r.message}")
