@@ -42,6 +42,7 @@ object ReviewResponseParser {
         val comment: String = "",
         val suggestion: String = "",
         val suggestedCode: String = "",
+        val originalCode: String = "",
         val friendlyComment: String = ""
     ) {
         fun toDomain(fallbackFile: String) = ReviewComment(
@@ -53,16 +54,22 @@ object ReviewResponseParser {
             comment         = comment,
             suggestion      = suggestion,
             suggestedCode   = suggestedCode,
+            originalCode    = originalCode,
             friendlyComment = friendlyComment
         )
     }
 
-    private fun parseSeverity(s: String): Severity = when (s.lowercase()) {
-        "critical" -> Severity.CRITICAL
-        "high"     -> Severity.HIGH
-        "medium"   -> Severity.MEDIUM
-        "low"      -> Severity.LOW
-        else       -> Severity.INFO
+    private fun parseSeverity(s: String): Severity {
+        val v = s.trim().lowercase()
+        return when {
+            v.startsWith("crit") || v == "blocker" -> Severity.CRITICAL
+            v.startsWith("high") || v == "major" || v == "error" -> Severity.HIGH
+            v.startsWith("med")  || v == "moderate" || v == "warning" -> Severity.MEDIUM
+            v.startsWith("low")  || v == "minor" -> Severity.LOW
+            v == "info" || v == "informational" || v == "note" || v == "nit" || v == "trivial" -> Severity.INFO
+            // Unknown/blank → MEDIUM (a safer default than INFO so real issues aren't hidden).
+            else -> Severity.MEDIUM
+        }
     }
 
     private fun parseCategory(s: String): ReviewCategory = when (s.lowercase()) {

@@ -41,11 +41,40 @@ SCOPE — THIS IS CRITICAL:
 - Lines starting with "-" are removed — do not review them.
 - If a "+" line is fine, say nothing about it. Do not invent issues to fill the response.
 
+SEVERITY RUBRIC — assign severity STRICTLY by IMPACT × LIKELIHOOD. Do not guess.
+Decide by asking: "If this ships, what is the worst realistic outcome, and how likely is it?"
+
+- Critical: Will almost certainly cause a serious failure in production.
+    e.g. guaranteed NullReferenceException on a common path, SQL injection, secret leaked,
+    data loss/corruption, auth bypass, deadlock that hangs requests, infinite loop.
+- High: Likely to cause a real bug, security hole, or outage under realistic conditions.
+    e.g. unhandled exception on a plausible input, .Result/.Wait() that can deadlock,
+    N+1 query on a hot path, race condition, missing authorization check, resource leak
+    (undisposed connection/stream), wrong business logic that returns incorrect results.
+- Medium: Real problem but bounded impact or needs specific conditions.
+    e.g. missing CancellationToken, swallowed exception, EF tracking on read-only query,
+    edge-case bug, moderate performance waste, SOLID/DDD violation that hurts maintainability.
+- Low: Minor correctness or design smell; unlikely to bite soon.
+    e.g. magic number, naming, slightly long method, minor duplication, missing guard clause
+    on an internal method.
+- Info: Purely informational / nitpick / optional improvement. No correctness or risk impact.
+
+CALIBRATION RULES (apply these to avoid under/over-rating):
+- A potential crash (null deref, unhandled exception, index-out-of-range) on a realistic path
+  is NEVER below High.
+- Anything in the Security category that is exploitable is Critical or High — never Low/Info.
+- Data loss, auth, injection → Critical.
+- Pure style/naming/formatting → Low or Info, never Medium+.
+- Be consistent: two issues with the same real-world impact MUST get the same severity.
+
 INSTRUCTIONS:
 - Only report real, objective, verifiable issues introduced by the "+" lines.
+- Be thorough but precise: do NOT invent issues, and do NOT miss real bugs. If unsure whether
+  something is a real problem, only include it if you can state a concrete failure scenario.
 - For "line", use the [line N] number shown on the relevant "+" line.
-- Explain WHY the issue is a problem and what can go wrong.
+- Explain WHY the issue is a problem and the concrete scenario in which it fails.
 - Provide a concrete corrected code snippet in the suggestion field.
+- Order findings by severity (Critical first).
 - If the changed lines have no issues, return an empty array [].
 - Respond with ONLY a valid JSON array. No markdown fences, no prose outside the JSON.
 
@@ -71,13 +100,20 @@ REQUIRED JSON FORMAT (array, even for single items):
     "category": "<Bug|Security|Performance|CleanCode|Solid|DDD|Maintainability|MissingTests|Concurrency>",
     "comment": "<technical: why the issue exists and what can go wrong>",
     "suggestion": "<technical: plain-English explanation of HOW to fix it>",
-    "suggestedCode": "<the corrected code that should REPLACE lines line..endLine — real compilable code only, no prose>",
+    "originalCode": "<the EXACT existing code snippet that should be replaced — copy it verbatim from the + lines, character-for-character including indentation>",
+    "suggestedCode": "<the corrected code that should replace originalCode, with the SAME scope>",
     "friendlyComment": "<a warm, varied, ready-to-post PR comment — see FIELDS guidance above>"
   }
 ]
 
-For "suggestedCode": provide the exact replacement code for the affected lines, so the
-developer can copy it directly. Keep it minimal — only the lines that change.
+CRITICAL RULES FOR "originalCode" and "suggestedCode" (an auto-fix tool uses these):
+- "originalCode" MUST be an exact, verbatim copy of existing code from the "+" lines —
+  same text, same indentation, same number of lines. It will be string-matched in the file.
+- "suggestedCode" replaces EXACTLY that snippet and nothing more. Same surrounding scope.
+- They must cover the SAME region. Do NOT put a whole method in suggestedCode if originalCode
+  is one line. Do NOT include extra unchanged lines in either field.
+- If you cannot identify a precise verbatim snippet to replace, leave BOTH fields empty ("").
+- Never duplicate existing code. The replacement is a 1:1 swap of originalCode → suggestedCode.
         """.trimIndent()
     }
 

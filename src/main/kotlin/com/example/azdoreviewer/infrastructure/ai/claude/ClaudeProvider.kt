@@ -39,15 +39,16 @@ class ClaudeProvider(
         .build()
 
     override suspend fun reviewFile(request: FileReviewRequest): List<ReviewComment> {
-        val text = callApi(PromptBuilder.build(request), 4096)
+        // Higher token budget so long reviews aren't truncated; low temperature for consistency.
+        val text = callApi(PromptBuilder.build(request), maxTokens = 8192, temperature = 0.0)
         return ReviewResponseParser.parse(text, request.filePath)
     }
 
-    override suspend fun ping(): String = callApi("Reply with exactly the word: OK", 16)
+    override suspend fun ping(): String = callApi("Reply with exactly the word: OK", 16, 0.0)
 
-    private suspend fun callApi(prompt: String, maxTokens: Int): String = withContext(Dispatchers.IO) {
+    private suspend fun callApi(prompt: String, maxTokens: Int, temperature: Double): String = withContext(Dispatchers.IO) {
         val body = json.encodeToString(ClaudeRequest(
-            model = model, maxTokens = maxTokens,
+            model = model, maxTokens = maxTokens, temperature = temperature,
             // Subscription OAuth requires the Claude Code system identity to be accepted
             system = if (useOAuth) "You are Claude Code, Anthropic's official CLI for Claude." else null,
             messages = listOf(Message("user", prompt))
@@ -122,6 +123,7 @@ class ClaudeProvider(
     private data class ClaudeRequest(
         val model: String,
         @kotlinx.serialization.SerialName("max_tokens") val maxTokens: Int,
+        val temperature: Double = 0.0,
         val system: String? = null,
         val messages: List<Message>
     )

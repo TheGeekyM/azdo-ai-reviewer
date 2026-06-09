@@ -348,36 +348,100 @@ class ReviewResultPanel(private val project: Project, private val pr: PullReques
         val doc = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(file)
         if (doc == null) { statusLabel.text = "⚠ Could not load document"; return }
 
-        val startLine = (c.line - 1).coerceIn(0, (doc.lineCount - 1).coerceAtLeast(0))
-        val endLine   = (if (c.endLine > c.line) c.endLine - 1 else startLine)
-            .coerceIn(startLine, (doc.lineCount - 1).coerceAtLeast(0))
+        val fullText = doc.text
 
-        // Preview the exact replacement so the user confirms before editing the file.
-        val original = doc.getText(com.intellij.openapi.util.TextRange(
-            doc.getLineStartOffset(startLine), doc.getLineEndOffset(endLine)))
+        // Locate the EXACT region to replace by matching the AI's verbatim originalCode.
+        // This avoids line-number drift and the duplication/merge bugs.
+        val match = locateRegion(fullText, doc, c)
+        if (match == null) {
+            statusLabel.text = "⚠ Couldn't safely locate the code to fix — apply it manually."
+            Messages.showWarningDialog(project,
+                "The exact original snippet wasn't found in the file, so the fix wasn't applied " +
+                "automatically (to avoid corrupting the file).\n\nUse the suggested code in the details pane manually.",
+                "Fix Not Applied")
+            return
+        }
+        val (from, to, original) = match
+
+        // Build the replacement, re-indenting relative to the original's first line.
+        val baseIndent = original.lineSequence().firstOrNull()?.takeWhile { it == ' ' || it == '\t' } ?: ""
+        val suggested  = c.suggestedCode.trim()
+        // If suggestedCode already carries its own indentation, keep it; otherwise apply baseIndent.
+        val newText = if (suggested.lines().any { it.startsWith(" ") || it.startsWith("\t") })
+            suggested
+        else
+            suggested.lines().joinToString("\n") { if (it.isBlank()) it else baseIndent + it }
+
+        // No-op guard: don't "apply" an identical replacement.
+        if (newText.trim() == original.trim()) {
+            statusLabel.text = "Nothing to change — the code already matches the suggestion."
+            return
+        }
+
         val confirm = Messages.showYesNoDialog(
             project,
-            "Replace line${if (endLine > startLine) "s ${startLine + 1}–${endLine + 1}" else " ${startLine + 1}"} " +
-            "in ${file.name}?\n\n— Current —\n$original\n\n— New —\n${c.suggestedCode.trim()}",
+            "Replace this in ${file.name}?\n\n— Current —\n$original\n\n— New —\n$newText",
             "Apply Suggested Fix", "Apply", "Cancel", Messages.getQuestionIcon()
         )
         if (confirm != Messages.YES) return
 
-        // Open the file so the change is visible, then replace inside a write command.
+        val startLine = doc.getLineNumber(from)
         com.intellij.openapi.fileEditor.OpenFileDescriptor(project, file, startLine, 0).navigate(true)
 
         com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project, "Apply Suggested Fix", null, {
-            val from = doc.getLineStartOffset(startLine)
-            val to   = doc.getLineEndOffset(endLine)
-            // Preserve the leading indentation of the first replaced line.
-            val indent = original.takeWhile { it == ' ' || it == '\t' }
-            val newText = c.suggestedCode.trim().lines().joinToString("\n") { line ->
-                if (line.isBlank()) line else indent + line.trimStart()
-            }
             doc.replaceString(from, to, newText)
             com.intellij.psi.PsiDocumentManager.getInstance(project).commitDocument(doc)
         })
-        statusLabel.text = "✓ Applied fix to ${file.name}:${c.line}  (Ctrl+Z to undo)"
+        statusLabel.text = "✓ Applied fix to ${file.name}  (Ctrl+Z to undo)"
+    }
+
+    /**
+     * Returns (startOffset, endOffset, originalText) for the region to replace.
+     * Strategy, in order of safety:
+     *  1. Exact verbatim match of c.originalCode in the file (preferred).
+     *  2. Whitespace-normalized match of c.originalCode (handles minor indent differences).
+     *  3. Fallback to the reported line range ONLY if originalCode is blank.
+     * Returns null if nothing safe is found (caller then declines to edit).
+     */
+    private fun locateRegion(
+        fullText: String,
+        doc: com.intellij.openapi.editor.Document,
+        c: ReviewComment
+    ): Triple<Int, Int, String>? {
+        val needle = c.originalCode.trim('\n')
+        if (needle.isNotBlank()) {
+            // 1. Exact match — but only if it's unambiguous (appears exactly once).
+            val firstIdx = fullText.indexOf(needle)
+            if (firstIdx >= 0 && fullText.indexOf(needle, firstIdx + 1) < 0) {
+                return Triple(firstIdx, firstIdx + needle.length, needle)
+            }
+
+            // 2. Whitespace-normalized unique match near the reported line.
+            val norm = { s: String -> s.replace(Regex("[ \\t]+"), " ").trim() }
+            val target = norm(needle)
+            val lines = fullText.lines()
+            val needleLineCount = needle.lines().size
+            var found: Triple<Int, Int, String>? = null
+            for (start in 0..(lines.size - needleLineCount).coerceAtLeast(0)) {
+                val window = lines.subList(start, (start + needleLineCount).coerceAtMost(lines.size))
+                if (norm(window.joinToString("\n")) == target) {
+                    if (found != null) return null  // ambiguous — refuse
+                    val from = doc.getLineStartOffset(start)
+                    val to   = doc.getLineEndOffset((start + needleLineCount - 1).coerceAtMost(doc.lineCount - 1))
+                    found = Triple(from, to, doc.getText(com.intellij.openapi.util.TextRange(from, to)))
+                }
+            }
+            return found
+        }
+
+        // 3. No originalCode given — fall back to the line range (least safe).
+        if (c.line <= 0) return null
+        val startLine = (c.line - 1).coerceIn(0, (doc.lineCount - 1).coerceAtLeast(0))
+        val endLine   = (if (c.endLine > c.line) c.endLine - 1 else startLine)
+            .coerceIn(startLine, (doc.lineCount - 1).coerceAtLeast(0))
+        val from = doc.getLineStartOffset(startLine)
+        val to   = doc.getLineEndOffset(endLine)
+        return Triple(from, to, doc.getText(com.intellij.openapi.util.TextRange(from, to)))
     }
 
     /**

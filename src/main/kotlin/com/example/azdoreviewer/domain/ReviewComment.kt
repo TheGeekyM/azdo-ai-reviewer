@@ -8,6 +8,7 @@ data class ReviewComment(
     val comment: String,          // what is wrong and why (for the details pane)
     val suggestion: String,       // prose: how to fix it (for the details pane)
     val suggestedCode: String = "",   // the actual replacement code
+    val originalCode: String = "",    // the exact existing snippet this replaces (for safe matching)
     val endLine: Int = 0,         // last affected line (0 = same as `line`)
     val friendlyComment: String = ""  // a warm, ready-to-post PR comment
 ) {
