@@ -4,6 +4,10 @@ A JetBrains Rider plugin that browses **Azure DevOps pull requests** and runs **
 
 > Status: working MVP. Built with the IntelliJ Platform Gradle plugin against the Rider SDK (`RD 2024.1.4`, compatible up to build `263.*`).
 
+## Demo
+
+https://github.com/TheGeekyM/azdo-ai-reviewer/releases/download/v1.0.3/demo.webm
+
 ---
 
 ## Features
