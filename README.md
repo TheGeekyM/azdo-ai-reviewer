@@ -6,7 +6,9 @@ A JetBrains Rider plugin that browses **Azure DevOps pull requests** and runs **
 
 ## Demo
 
-https://github.com/TheGeekyM/azdo-ai-reviewer/releases/download/v1.0.3/demo.mp4
+![Azure DevOps AI Reviewer demo](demo.gif)
+
+> Prefer full quality? [Watch the MP4](https://github.com/TheGeekyM/azdo-ai-reviewer/releases/download/v1.0.3/demo.mp4).
 
 ---
 
