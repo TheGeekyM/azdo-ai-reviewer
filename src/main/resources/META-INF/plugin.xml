@@ -1,5 +1,5 @@
 <idea-plugin>
-    <id>com.example.azdo-ai-reviewer</id>
+    <id>com.thegeekym.azdoaireviewer</id>
     <name>Azure DevOps AI Reviewer</name>
     <vendor email="thegeekym@gmail.com">Mohamed Emad</vendor>
     <description><![CDATA[
