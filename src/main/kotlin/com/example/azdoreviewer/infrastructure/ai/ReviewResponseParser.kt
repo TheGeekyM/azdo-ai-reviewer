@@ -13,17 +13,7 @@ object ReviewResponseParser {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     fun parse(raw: String, fallbackFile: String): List<ReviewComment> {
-        val cleaned = raw
-            .removePrefix("```json").removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-            .let { s ->
-                // Find the JSON array boundaries in case the model added prose before/after
-                val start = s.indexOf('[')
-                val end   = s.lastIndexOf(']')
-                if (start >= 0 && end > start) s.substring(start, end + 1) else s
-            }
-
+        val cleaned = extractJsonArray(raw)
         return runCatching {
             json.decodeFromString<List<ReviewCommentDto>>(cleaned).map { it.toDomain(fallbackFile) }
         }.getOrElse { e ->
@@ -31,6 +21,41 @@ object ReviewResponseParser {
             emptyList()
         }
     }
+
+    /** One verdict from the adversarial verify pass over an earlier finding. */
+    data class Verdict(val index: Int, val verdict: String, val severity: Severity?, val reason: String = "")
+
+    /** Parses the verify pass's JSON array. Never throws — returns empty on any parse failure. */
+    fun parseVerdicts(raw: String): List<Verdict> {
+        val cleaned = extractJsonArray(raw)
+        return runCatching {
+            json.decodeFromString<List<VerdictDto>>(cleaned).map {
+                Verdict(it.index, it.verdict.trim().lowercase(), it.severity?.let(::parseSeverity), it.reason)
+            }
+        }.getOrElse { e ->
+            thisLogger().warn("Failed to parse verify pass response: ${e.message}\nRaw: ${cleaned.take(200)}")
+            emptyList()
+        }
+    }
+
+    private fun extractJsonArray(raw: String): String = raw
+        .removePrefix("```json").removePrefix("```")
+        .removeSuffix("```")
+        .trim()
+        .let { s ->
+            // Find the JSON array boundaries in case the model added prose before/after
+            val start = s.indexOf('[')
+            val end   = s.lastIndexOf(']')
+            if (start >= 0 && end > start) s.substring(start, end + 1) else s
+        }
+
+    @Serializable
+    private data class VerdictDto(
+        val index: Int = -1,
+        val verdict: String = "confirm",
+        val severity: String? = null,
+        val reason: String = ""
+    )
 
     @Serializable
     private data class ReviewCommentDto(

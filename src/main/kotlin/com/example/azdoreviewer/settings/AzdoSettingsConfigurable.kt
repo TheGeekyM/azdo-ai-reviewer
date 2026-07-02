@@ -9,6 +9,7 @@ import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.ComboBox
 import com.intellij.openapi.ui.Messages
+import com.intellij.ui.components.JBCheckBox
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
@@ -57,6 +58,7 @@ class AzdoSettingsConfigurable : Configurable {
     private val signOutBtn      = JButton("Sign out")
     private val aiStatusLabel   = JBLabel("")
     private val maxFilesSpinner = JSpinner(SpinnerNumberModel(20, 1, 100, 1))
+    private val verifyFindingsCheck = JBCheckBox("Verify findings before posting (extra AI pass; catches false positives & wrong severity)")
 
     override fun getDisplayName() = "Azure DevOps AI Reviewer"
 
@@ -157,6 +159,10 @@ class AzdoSettingsConfigurable : Configurable {
         panel.add(lbl("Max files"), c)
         c.gridx = 1; c.gridwidth = 2; c.weightx = 1.0
         panel.add(maxFilesSpinner, c)
+        row++
+
+        c.gridx = 0; c.gridy = row; c.gridwidth = 3; c.weightx = 1.0
+        panel.add(verifyFindingsCheck, c)
         row++
 
         // Filler
@@ -299,6 +305,7 @@ class AzdoSettingsConfigurable : Configurable {
                aiProviderCombo.selectedItem != s.aiProvider ||
                modelText() != s.aiModel ||
                (maxFilesSpinner.value as Int) != s.maxFilesPerReview ||
+               verifyFindingsCheck.isSelected != s.verifyFindings ||
                String(tokenField.password).isNotEmpty() ||
                String(aiKeyField.password).isNotEmpty()
     }
@@ -309,6 +316,7 @@ class AzdoSettingsConfigurable : Configurable {
         s.aiProvider        = aiProviderCombo.selectedItem as String
         s.aiModel           = modelText()
         s.maxFilesPerReview = maxFilesSpinner.value as Int
+        s.verifyFindings    = verifyFindingsCheck.isSelected
 
         String(tokenField.password).takeIf { it.isNotEmpty() && it != "••••••••••••••••" }?.let {
             settings.setPat(it)
@@ -325,6 +333,7 @@ class AzdoSettingsConfigurable : Configurable {
         aiProviderCombo.selectedItem = s.aiProvider
         setModelText(s.aiModel)
         maxFilesSpinner.value = s.maxFilesPerReview
+        verifyFindingsCheck.isSelected = s.verifyFindings
         tokenField.text = if (settings.getPat() != null) "••••••••••••••••" else ""
         aiKeyField.text = if (settings.getAiApiKey() != null) "••••••••••••••••" else ""
 

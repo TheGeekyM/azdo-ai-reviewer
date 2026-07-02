@@ -33,6 +33,15 @@ class CommentService {
     /** The default formatted body for a comment — used to seed the editable preview. */
     fun previewComment(comment: ReviewComment): String = formatComment(comment)
 
+    /** Posts a general (non-line-anchored) comment — used when a finding has no specific file/line. */
+    fun postGeneralComment(prId: Int, bodyText: String) {
+        prService.createCommentThread(prId, CommentThreadRequest(
+            comments = listOf(CommentRequest(content = bodyText)),
+            status   = "active"
+        ))
+        cache.invalidatePr(prId)
+    }
+
     fun postAllComments(prId: Int, comments: List<ReviewComment>) {
         comments.forEach { comment ->
             runCatching { postLineComment(prId, comment) }

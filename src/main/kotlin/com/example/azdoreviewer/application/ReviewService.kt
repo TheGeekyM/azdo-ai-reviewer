@@ -3,8 +3,14 @@ package com.example.azdoreviewer.application
 import com.example.azdoreviewer.domain.ChangeType
 import com.example.azdoreviewer.domain.ReviewComment
 import com.example.azdoreviewer.infrastructure.ai.AiProviderFactory
+import com.example.azdoreviewer.infrastructure.ai.AiReviewProvider
 import com.example.azdoreviewer.infrastructure.ai.PrFile
 import com.example.azdoreviewer.infrastructure.ai.PrReviewRequest
+import com.example.azdoreviewer.infrastructure.ai.PromptBuilder
+import com.example.azdoreviewer.infrastructure.ai.ReviewResponseParser
+import com.example.azdoreviewer.infrastructure.ai.WorkItemValidationParser
+import com.example.azdoreviewer.domain.WorkItem
+import com.example.azdoreviewer.domain.WorkItemValidation
 import com.example.azdoreviewer.infrastructure.analyzer.RoslynAnalyzerRunner
 import com.example.azdoreviewer.infrastructure.cache.PrCacheService
 import com.example.azdoreviewer.settings.AzdoSettings
@@ -77,9 +83,47 @@ class ReviewService {
             throw IllegalStateException("AI review failed.\n\n${errors.first()}")
         }
 
-        val sorted = results.sortedWith(compareBy({ it.severity.ordinal }, { it.file }, { it.line }))
+        val verified = if (settings.state.verifyFindings) {
+            verifyFindings(provider, pr?.title ?: "PR #$prId", results, files)
+        } else results
+
+        val sorted = verified.sortedWith(compareBy({ it.severity.ordinal }, { it.file }, { it.line }))
         cache.invalidatePr(prId)
         return sorted
+    }
+
+    /**
+     * Adversarial second pass: shows the first pass's findings back to the model with the diff
+     * evidence and asks it to confirm/downgrade/reject each one. Fails open — if the pass errors
+     * or the response doesn't parse, findings are kept unverified rather than dropped.
+     */
+    private fun verifyFindings(
+        provider: AiReviewProvider,
+        prTitle: String,
+        findings: List<ReviewComment>,
+        files: List<PrFile>
+    ): List<ReviewComment> {
+        if (findings.isEmpty()) return findings
+        val filesByPath = files.associateBy { it.path }
+        val prompt = PromptBuilder.buildVerify(prTitle, findings, filesByPath)
+
+        val verdicts = runCatching {
+            runBlocking { ReviewResponseParser.parseVerdicts(provider.complete(prompt)) }
+        }.getOrElse { e ->
+            thisLogger().warn("Verify pass failed, keeping findings unverified: ${e.message}")
+            emptyList()
+        }.associateBy { it.index }
+
+        return findings.mapIndexedNotNull { i, finding ->
+            when (val v = verdicts[i]) {
+                null -> finding
+                else -> when (v.verdict) {
+                    "reject"    -> null
+                    "downgrade" -> finding.copy(severity = v.severity ?: finding.severity)
+                    else        -> finding
+                }
+            }
+        }
     }
 
     /**
@@ -128,6 +172,31 @@ class ReviewService {
             dir = dir.parentFile
         }
         return firstSln
+    }
+
+    /**
+     * Checks whether a PR's changed files actually satisfy a work item's requirements
+     * (description / repro steps / acceptance criteria) — a requirements-coverage check, not a
+     * code-quality review.
+     */
+    fun validateAgainstWorkItem(prId: Int, workItem: WorkItem): WorkItemValidation {
+        val provider = AiProviderFactory.create(settings)
+        val pr = prService.getPr(prId)
+        val diffs = prService.getPrDiffs(prId).filter { it.changeType != ChangeType.DELETE }
+
+        if (diffs.isEmpty()) {
+            throw IllegalStateException("No changed files found for PR #$prId.")
+        }
+
+        val files = diffs.map { d -> PrFile(d.path, d.toUnifiedDiff(), null) }
+        val prompt = PromptBuilder.buildValidateWorkItem(
+            workItem      = workItem,
+            prTitle       = pr?.title ?: "PR #$prId",
+            prDescription = pr?.description ?: "",
+            files         = files
+        )
+        val raw = runBlocking { provider.complete(prompt, maxTokens = 4096) }
+        return WorkItemValidationParser.parse(raw)
     }
 
     /** Lists model IDs the configured provider/account can use. Empty on failure. */

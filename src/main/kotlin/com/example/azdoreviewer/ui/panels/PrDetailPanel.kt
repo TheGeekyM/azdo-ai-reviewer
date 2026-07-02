@@ -27,6 +27,7 @@ class PrDetailPanel(private val project: Project, private val pr: PullRequest) {
         tabs.addTab("Details",      buildDetailsTab())
         tabs.addTab("Files Changed", FilesChangedPanel(project, pr).getComponent())
         tabs.addTab("AI Review",    ReviewResultPanel(project, pr).getComponent())
+        tabs.addTab("Work Item",    WorkItemPanel(project, pr).getComponent())
     }
 
     fun getComponent(): JComponent = tabs

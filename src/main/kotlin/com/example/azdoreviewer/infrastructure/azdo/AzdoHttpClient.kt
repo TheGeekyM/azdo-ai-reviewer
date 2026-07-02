@@ -156,6 +156,17 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
 
     override fun fetchFileContent(repoId: String, path: String, commitSha: String): String? = null // unused
 
+    override fun fetchWorkItem(workItemId: Int): WorkItem {
+        val body = get("$base/_apis/wit/workitems/$workItemId?$v")
+        return json.decodeFromString<WorkItemDto>(body).toDomain()
+    }
+
+    override fun fetchLinkedWorkItemIds(prId: Int): List<Int> {
+        val (project, repoId) = prRepoMap[prId] ?: return emptyList()
+        val body = get("$base/$project/_apis/git/repositories/$repoId/pullrequests/$prId/workitems?$v")
+        return json.decodeFromString<PrWorkItemRefsResponse>(body).value.mapNotNull { it.id.toIntOrNull() }
+    }
+
     override fun createCommentThread(prId: Int, request: CommentThreadRequest) {
         val (project, repoId) = prRepoMap[prId] ?: throw AzdoException.NotFound("PR $prId not in current list. Refresh first.")
         val body = json.encodeToString(request)

@@ -44,6 +44,9 @@ class OpenAiProvider(
             ReviewResponseParser.parse(content, request.files.firstOrNull()?.path ?: "")
         }
 
+    override suspend fun complete(prompt: String, maxTokens: Int): String =
+        withContext(Dispatchers.IO) { chat(prompt) ?: "" }
+
     private fun chat(prompt: String): String? {
         val body = json.encodeToString(OpenAiRequest(
             model    = model,

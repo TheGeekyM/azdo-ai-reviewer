@@ -42,6 +42,9 @@ class OllamaProvider(
             ReviewResponseParser.parse(generate(PromptBuilder.buildPr(request)), request.files.firstOrNull()?.path ?: "")
         }
 
+    override suspend fun complete(prompt: String, maxTokens: Int): String =
+        withContext(Dispatchers.IO) { generate(prompt) }
+
     private fun generate(prompt: String): String {
         val body = json.encodeToString(OllamaRequest(model = model, prompt = prompt, stream = false))
         val httpRequest = Request.Builder()

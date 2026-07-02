@@ -136,6 +136,57 @@ data class ItemDto(
 )
 
 @Serializable
+data class WorkItemDto(
+    val id: Int = 0,
+    val fields: WorkItemFieldsDto = WorkItemFieldsDto()
+) {
+    fun toDomain() = WorkItem(
+        id                 = id,
+        type               = fields.workItemType,
+        title              = fields.title,
+        state              = fields.state,
+        description        = stripHtml(fields.description),
+        reproSteps         = stripHtml(fields.reproSteps),
+        acceptanceCriteria = stripHtml(fields.acceptanceCriteria)
+    )
+}
+
+@Serializable
+data class WorkItemFieldsDto(
+    @SerialName("System.Title") val title: String = "",
+    @SerialName("System.WorkItemType") val workItemType: String = "",
+    @SerialName("System.State") val state: String = "",
+    @SerialName("System.Description") val description: String = "",
+    @SerialName("Microsoft.VSTS.TCM.ReproSteps") val reproSteps: String = "",
+    @SerialName("Microsoft.VSTS.Common.AcceptanceCriteria") val acceptanceCriteria: String = ""
+)
+
+/** Azure DevOps rich-text fields (Description/ReproSteps/AcceptanceCriteria) come back as HTML. */
+private fun stripHtml(html: String): String {
+    if (html.isBlank()) return html
+    return html
+        .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
+        .replace(Regex("</p>|</div>", RegexOption.IGNORE_CASE), "\n\n")
+        .replace(Regex("</li>", RegexOption.IGNORE_CASE), "\n")
+        .replace(Regex("<li[^>]*>", RegexOption.IGNORE_CASE), "• ")
+        .replace(Regex("<[^>]+>"), "")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .lines().joinToString("\n") { it.trimEnd() }
+        .trim()
+}
+
+@Serializable
+data class PrWorkItemRefsResponse(val value: List<WorkItemRefDto> = emptyList())
+
+@Serializable
+data class WorkItemRefDto(val id: String = "", val url: String = "")
+
+@Serializable
 data class CommentThreadRequest(
     val comments: List<CommentRequest>,
     val status: String = "active",

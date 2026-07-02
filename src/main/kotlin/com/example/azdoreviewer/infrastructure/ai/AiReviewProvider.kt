@@ -22,6 +22,9 @@ interface AiReviewProvider {
 
     /** Lists the model IDs this account can use. Empty if the provider has no list endpoint. */
     suspend fun listModels(): List<String> = emptyList()
+
+    /** Sends a raw prompt and returns the model's raw text reply (used for the verify pass). */
+    suspend fun complete(prompt: String, maxTokens: Int = 4096): String
 }
 
 data class FileReviewRequest(

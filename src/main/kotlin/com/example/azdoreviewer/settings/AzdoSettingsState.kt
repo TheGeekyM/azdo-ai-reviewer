@@ -9,5 +9,6 @@ data class AzdoSettingsState(
     var aiModel: String = "",
     var maxFilesPerReview: Int = 20,
     var reviewOnlyAddedLines: Boolean = false,
-    var claudeAuthMode: String = "apikey"   // "apikey" or "oauth" (subscription)
+    var claudeAuthMode: String = "apikey",  // "apikey" or "oauth" (subscription)
+    var verifyFindings: Boolean = true      // extra adversarial AI pass to catch false positives/bad severity
 )

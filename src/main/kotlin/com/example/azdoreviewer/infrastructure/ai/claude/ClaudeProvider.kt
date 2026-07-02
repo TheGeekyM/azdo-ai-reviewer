@@ -53,6 +53,8 @@ class ClaudeProvider(
 
     override suspend fun ping(): String = callApi("Reply with exactly the word: OK", 16, 0.0)
 
+    override suspend fun complete(prompt: String, maxTokens: Int): String = callApi(prompt, maxTokens, 0.0)
+
     override suspend fun listModels(): List<String> = withContext(Dispatchers.IO) {
         val builder = Request.Builder()
             .url("https://api.anthropic.com/v1/models?limit=100")

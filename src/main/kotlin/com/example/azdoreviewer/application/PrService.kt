@@ -2,6 +2,7 @@ package com.example.azdoreviewer.application
 
 import com.example.azdoreviewer.domain.FileDiff
 import com.example.azdoreviewer.domain.PullRequest
+import com.example.azdoreviewer.domain.WorkItem
 import com.example.azdoreviewer.infrastructure.azdo.AzdoHttpClient
 import com.example.azdoreviewer.infrastructure.cache.PrCacheService
 import com.example.azdoreviewer.settings.AzdoSettings
@@ -61,6 +62,15 @@ class PrService {
     fun completePr(prId: Int) {
         if (!client.knowsPr(prId)) client.fetchAssignedPrs()
         client.completePr(prId)
+    }
+
+    /** Fetches a work item by ID (user story/task/bug) — description, repro steps, acceptance criteria. */
+    fun getWorkItem(id: Int): WorkItem = client.fetchWorkItem(id)
+
+    /** The first work item linked to this PR in Azure DevOps, if any (used to prefill the search box). */
+    fun getLinkedWorkItemId(prId: Int): Int? {
+        if (!client.knowsPr(prId)) client.fetchAssignedPrs()
+        return runCatching { client.fetchLinkedWorkItemIds(prId).firstOrNull() }.getOrNull()
     }
 
     private fun cacheKey(): String = settings.state.organizationUrl

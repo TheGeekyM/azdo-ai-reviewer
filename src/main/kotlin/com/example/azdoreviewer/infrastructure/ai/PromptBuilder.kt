@@ -1,6 +1,82 @@
 package com.example.azdoreviewer.infrastructure.ai
 
+import com.example.azdoreviewer.domain.ReviewComment
+import com.example.azdoreviewer.domain.WorkItem
+
 object PromptBuilder {
+
+    /**
+     * Asks the model to check whether a PR's diffs actually satisfy a linked work item's
+     * requirements (description / repro steps / acceptance criteria) — a QA-style check, not a
+     * code-quality review.
+     */
+    fun buildValidateWorkItem(
+        workItem: WorkItem,
+        prTitle: String,
+        prDescription: String,
+        files: List<PrFile>
+    ): String {
+        val filesBlock = files.joinToString("\n\n") { f ->
+            """
+FILE: ${f.path}
+```diff
+${f.unifiedDiff}
+```
+""".trim()
+        }
+
+        return """
+You are a meticulous QA-minded senior engineer. Validate whether this pull request actually
+implements the work item below. Judge REQUIREMENTS COVERAGE only — not code quality, style, or
+bugs (a separate review handles that).
+
+WORK ITEM #${workItem.id} (${workItem.type})${if (workItem.state.isNotBlank()) " — ${workItem.state}" else ""}
+Title: ${workItem.title}
+
+Description:
+${workItem.description.ifBlank { "(none)" }}
+${if (workItem.reproSteps.isNotBlank()) "\nRepro Steps (bug):\n${workItem.reproSteps}\n" else ""}
+${if (workItem.acceptanceCriteria.isNotBlank()) "\nAcceptance Criteria:\n${workItem.acceptanceCriteria}\n" else ""}
+
+PULL REQUEST
+Title: $prTitle
+Description: ${prDescription.ifBlank { "(none)" }}
+
+CHANGED FILES (diff — "+" lines are what the PR actually does):
+$filesBlock
+
+Break the work item into its individual checkable requirements (each acceptance-criteria bullet;
+for a bug, each repro step / expected-vs-actual behavior; for a story/task with no AC, the key
+asks in the description). For EACH one, decide if the diff evidence shows it was addressed.
+Be concrete — cite what the diff does or doesn't do. If you cannot tell from the diffs shown,
+say so rather than guessing.
+
+For EACH finding, also point to the most relevant file/line from the diffs above (copy the file
+path exactly from a FILE: header, and the line number from its [line N] annotation) — for Met,
+where it was implemented; for Not Met/Partial, where it should have been but wasn't, or the
+closest relevant code. Leave file/line blank ("" / 0) only if genuinely not identifiable.
+
+For Not Met and Partial findings ONLY, also write a "friendlyComment": a warm, human, first-person
+PR comment (varied opening, no AI/tool/Azure/severity mentions) explaining what's missing and
+gently asking the author to address it — ready to post as-is. Leave it blank for Met findings.
+
+Respond with ONLY a JSON object, no markdown fences, no prose:
+{
+  "verdict": "Meets requirements|Partially meets requirements|Does not meet requirements|Unclear",
+  "findings": [
+    {
+      "requirement": "<short paraphrase>",
+      "status": "Met|Not Met|Partial|Unclear",
+      "explanation": "<why, referencing the diff>",
+      "file": "<exact file path from a FILE: header, or \"\">",
+      "line": <line number from a [line N] annotation, or 0>,
+      "friendlyComment": "<warm first-person PR comment; blank if status is Met>"
+    }
+  ],
+  "summary": "<2-4 sentence overall verdict in plain language>"
+}
+        """.trimIndent()
+    }
 
     /** Single-file review (used for the ping/quick path). */
     fun build(request: FileReviewRequest): String {
@@ -94,21 +170,75 @@ $SEVERITY_AND_OUTPUT_MULTIFILE
         """.trimIndent()
     }
 
+    /**
+     * Adversarial second pass: shows a skeptical reviewer the findings the FIRST pass produced,
+     * plus the actual diff evidence, and asks it to confirm/downgrade/reject each one. This is
+     * what catches the false positives and inflated severities a single pass tends to produce.
+     */
+    fun buildVerify(prTitle: String, findings: List<ReviewComment>, filesByPath: Map<String, PrFile>): String {
+        val findingsBlock = findings.mapIndexed { i, c ->
+            """
+[$i] file=${c.file} line=${c.lineRange} severity=${c.severity.label} category=${c.category.label}
+Claim: ${c.comment}
+Original code:
+${c.originalCode.ifBlank { "(not captured)" }}
+Suggested fix:
+${c.suggestedCode.ifBlank { "(none)" }}
+""".trim()
+        }.joinToString("\n\n")
+
+        val diffsBlock = findings.map { it.file }.distinct().mapNotNull { filesByPath[it] }.joinToString("\n\n") { f ->
+            """
+FILE: ${f.path}
+```diff
+${f.unifiedDiff}
+```
+""".trim()
+        }
+
+        return """
+You are a skeptical senior engineer doing a SECOND, ADVERSARIAL pass over another reviewer's
+findings for the pull request "$prTitle". Your job is only to catch false positives and wrong
+severities in the findings below — do NOT look for new issues.
+
+For EACH numbered finding, decide:
+- "confirm": the claim is real, concretely wrong, and the severity is right.
+- "downgrade": real, but the severity is too high — give the corrected severity.
+- "reject": not a real issue — speculative, already handled by surrounding code, functionally
+  identical to the original, or simply wrong. Give a one-sentence reason.
+
+Be harsh: if you cannot back a finding with the diff evidence below, reject it.
+
+FINDINGS:
+$findingsBlock
+
+DIFF EVIDENCE:
+$diffsBlock
+
+Respond with ONLY a JSON array, no markdown fences, no prose:
+[{"index": <n>, "verdict": "confirm|downgrade|reject", "severity": "<only if downgrade>", "reason": "<short>"}]
+        """.trimIndent()
+    }
+
     // ── Personas ───────────────────────────────────────────────────────────────
     private fun genericPersona(language: String) =
         "You are a principal-level software engineer and meticulous code reviewer for $language."
 
     private val CSHARP_PERSONA = """
-You are a principal-level C# / .NET 9 engineer with 15+ years of production experience.
-You have deep, battle-tested expertise in:
+You are a principal-level C# / .NET 9 engineer with 15+ years of production experience, doing a
+THOROUGH review — go deep, not just surface-level null checks. You have deep, battle-tested
+expertise in:
 - ASP.NET Core, Entity Framework Core (EF Core), LINQ-to-SQL translation rules
 - async/await, TPL, thread safety, CancellationToken propagation
 - Nullable reference types, null safety patterns
 - Dependency Injection, object lifetimes, IDisposable
 - Domain-Driven Design, Clean Architecture, CQRS/MediatR
-- ABP Framework patterns and conventions
-- SQL Server query behavior, indexes, execution plans
+- ABP Framework AND ASP.NET Zero conventions specifically: application services, DTOs/AutoMapper,
+  repository pattern, UnitOfWork, auditing, soft delete, multi-tenancy, permission-based authorization,
+  localization
+- SQL Server / database performance: indexes, execution plans, query shape, pagination
 - Security: OWASP Top 10, input validation, authorization
+- Encapsulation and API surface hygiene: visibility, dead code, unused imports
 
 IMPORTANT — DO NOT report EF Core query *translatability* issues (whether a method/expression
 translates to SQL). A Roslyn static analyzer runs separately and owns those checks with
@@ -165,16 +295,41 @@ SECURITY
 - Unvalidated user input flowing into file paths, shell commands, or external URIs
 - Sensitive data (passwords, tokens, PII) written to logs
 
-DDD / CLEAN ARCHITECTURE (ABP context)
+DDD / CLEAN ARCHITECTURE
 - Domain logic (invariants, business rules) implemented in Application or Infrastructure layer
 - Anemic domain model: entities with only public setters, no encapsulation
 - Application service depending on an Infrastructure concretion instead of an abstraction
 - Value objects implemented as plain primitives (primitive obsession)
 
-PERFORMANCE & LINQ
+ASP.NET ZERO / ABP FRAMEWORK — only flag when the surrounding code makes it unambiguous:
+- Application service method bypasses the repository pattern (raw DbContext instead of
+  IRepository<TEntity>/IRepository<TEntity, TKey>) where the rest of the codebase uses repositories
+- Entity/DTO manually sets CreationTime/CreatorUserId/LastModificationTime on an
+  IAudited/IFullAudited/ICreationAudited entity — the framework sets these automatically; a manual
+  override is a bug, not just style
+- Hard-deleting (Repository.Delete / raw SQL DELETE) an entity that implements ISoftDelete instead
+  of relying on the framework's soft-delete behavior
+- Multi-tenant entity (implements IMayHaveTenant/IMustHaveTenant) queried/created without going
+  through the normal DbContext/repository path that applies the tenant filter — risks cross-tenant
+  data leakage
+- New application service endpoint or handler with no permission check
+  ([AbpAuthorize("Permission.Name")] or equivalent) where sibling endpoints in the same service have one
+- Entity directly returned/bound from an application service instead of mapping to/from a DTO
+  (AutoMapper CreateMap or manual mapping) — risk of over-posting or leaking internal fields
+- User-facing string hardcoded in English where the surrounding code uses L("Key")/localization
+  resources for equivalent strings
+- Long-running or expensive work done inline in a request instead of via IBackgroundJobManager,
+  when the codebase already uses background jobs for similar work
+
+DATABASE & CODE PERFORMANCE
+- Missing index-friendly filtering: WHERE/OrderBy on a column that isn't indexed when an indexed
+  alternative is available and obvious from context (do not guess at actual index existence if it
+  cannot be seen — only flag when the change clearly regresses an existing indexed access pattern)
 - Multiple enumeration of an IEnumerable<T> (iterating twice, ToList() in a loop)
-- Unnecessary allocations in hot paths (string concatenation in loops)
+- Unnecessary allocations in hot paths (string concatenation in loops, boxing, unneeded LINQ chains)
 - Large collections pulled into memory for in-memory filtering that could be a SQL WHERE
+- Missing pagination (Skip/Take) on a query that can return an unbounded result set to a client
+- Synchronous blocking I/O (file/db/http) on a request-handling path where async is available
 
 SOLID & DESIGN
 - SRP: method/class with more than one clear responsibility
@@ -182,10 +337,25 @@ SOLID & DESIGN
 - Magic numbers/strings that should be named constants or enum values
 - Method > ~40 lines doing multiple distinct things; deep nesting (>3 levels)
 
-NAMING & CLARITY
+DEAD CODE, UNUSED IMPORTS & VISIBILITY — precision matters here; false positives are easy:
+- Unused `using` directive: ONLY flag if no type/extension method from that namespace is referenced
+  anywhere in the full file shown. If in doubt (e.g. it could be an extension-method or global-usings
+  provider), SKIP.
+- Unreachable code: statements after an unconditional return/throw/continue/break in the same block
+- Private method/field/property added or touched by this change that is never referenced anywhere in
+  the full file shown. SKIP if it could be used via reflection, DI, serialization, an interface
+  contract, or a partial class/file not shown here.
+- A member marked `public` that is never used outside its declaring class/file as shown, when it
+  could reasonably be `private`/`internal`/`protected` instead (encapsulation) — do NOT flag public
+  members that are clearly part of an interface implementation, a controller/application-service
+  action, or a DTO.
+
+READABILITY
 - Misleading name: name implies X but code does Y
 - Abbreviated names (usr, req, tmp) in non-trivial scope
 - Inconsistency with surrounding codebase naming conventions
+- Deeply nested ternaries or boolean expressions that should be extracted into a named variable/method
+- Long parameter list (5+) that should be a parameter object/DTO
 """.trim()
 
     private val GENERIC_CRITERIA = """
@@ -193,10 +363,12 @@ REVIEW CRITERIA — check the changed lines for:
 1. Bugs: null refs, off-by-one, unhandled exceptions, incorrect logic.
 2. Security: injection, secrets, missing auth, unvalidated input.
 3. Concurrency: race conditions, improper async, missing cancellation.
-4. Performance: needless allocations, blocking calls, N+1 patterns.
+4. Performance: needless allocations, blocking calls, N+1 patterns, missing pagination.
 5. SOLID / design: SRP, DIP, leaky abstractions.
-6. Clean code: magic values, deep nesting, long methods, poor naming, duplication.
-7. Missing tests / guard clauses.
+6. Clean code & readability: magic values, deep nesting, long methods, poor naming, duplication.
+7. Dead code & visibility: unused imports (only if unambiguous), unreachable code, unused
+   private members, members that could be narrower in scope than they are.
+8. Missing tests / guard clauses.
 """.trim()
 
     // ── Shared discipline + output ─────────────────────────────────────────────
