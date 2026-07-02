@@ -3,15 +3,35 @@
     <name>Azure DevOps AI Reviewer</name>
     <vendor email="thegeekym@gmail.com">Mohamed Emad</vendor>
     <description><![CDATA[
-        AI-powered code review for Azure DevOps pull requests inside Rider.<br/>
-        Supports Claude, OpenAI, Gemini, and local LLMs via Ollama.<br/>
+        AI-powered code review for Azure DevOps (on-prem Server) pull requests inside Rider.<br/>
+        Supports Claude (API key or Pro/Max subscription), OpenAI, and local LLMs via Ollama.<br/>
         <ul>
-            <li>Browse PRs assigned to you</li>
+            <li>Browse PRs assigned to you across every repo in your collection</li>
             <li>View changed files and diffs</li>
-            <li>Run AI code review on any PR</li>
-            <li>Post comments back to Azure DevOps</li>
+            <li>Run a whole-PR AI review — bugs, security, performance, DDD/Clean Architecture,
+                ASP.NET Zero/ABP conventions, dead code, readability — with a second adversarial
+                pass to cut false positives</li>
+            <li>Bundled Roslyn static analysis (Roslynator + SonarAnalyzer) for compiler-accurate
+                findings alongside the AI's judgment calls</li>
+            <li>Validate a PR's changes against a linked Azure DevOps work item's description,
+                repro steps, and acceptance criteria</li>
+            <li>Apply suggested fixes directly, jump to code, and post human-toned comments back
+                to Azure DevOps</li>
+            <li>Approve, reject, or complete (merge) the PR from within Rider</li>
         </ul>
     ]]></description>
+
+    <change-notes><![CDATA[
+        <b>1.1.0</b>
+        <ul>
+            <li>New "Work Item" tab: validate a PR's changes against a linked user story/task/bug's
+                description, repro steps, and acceptance criteria</li>
+            <li>AI review now runs a second, adversarial pass to catch false positives and
+                miscalibrated severities before showing results</li>
+            <li>Deeper C# review checklist: ASP.NET Zero/ABP conventions, database/code performance,
+                dead code &amp; visibility, readability</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>Git4Idea</depends>

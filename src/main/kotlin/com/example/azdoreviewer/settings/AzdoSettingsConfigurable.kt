@@ -45,7 +45,7 @@ class AzdoSettingsConfigurable : Configurable {
     private val statusLabel     = JBLabel("")
 
     // AI
-    private val aiProviderCombo = ComboBox(arrayOf("claude", "openai", "gemini", "ollama"))
+    private val aiProviderCombo = ComboBox(arrayOf("claude", "openai", "ollama"))
     // Editable combo: pick a known model or type a custom ID. "Load models" fills it from the API.
     private val aiModelCombo    = ComboBox(DEFAULT_MODELS).apply { isEditable = true }
     private val loadModelsBtn   = JButton("Load models")
