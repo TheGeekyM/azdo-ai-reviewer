@@ -195,7 +195,7 @@ class ReviewService {
             prDescription = pr?.description ?: "",
             files         = files
         )
-        val raw = runBlocking { provider.complete(prompt, maxTokens = 4096) }
+        val raw = runBlocking { provider.complete(prompt, maxTokens = 8192) }
         return WorkItemValidationParser.parse(raw)
     }
 

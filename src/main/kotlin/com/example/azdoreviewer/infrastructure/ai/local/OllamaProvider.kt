@@ -55,7 +55,9 @@ class OllamaProvider(
             if (!r.isSuccessful) throw AiException("Ollama error ${r.code}: ${r.message}")
             r.body?.string() ?: throw AiException("Empty response from Ollama")
         }
-        return json.decodeFromString<OllamaResponse>(raw).response
+        // Thinking models leave `response` empty and put content in `thinking`; fall back to it.
+        val r = json.decodeFromString<OllamaResponse>(raw)
+        return r.response.ifBlank { r.thinking }
     }
 
     override suspend fun ping(): String = withContext(Dispatchers.IO) {
@@ -75,5 +77,5 @@ class OllamaProvider(
     private data class OllamaRequest(val model: String, val prompt: String, val stream: Boolean)
 
     @Serializable
-    private data class OllamaResponse(val response: String = "")
+    private data class OllamaResponse(val response: String = "", val thinking: String = "")
 }

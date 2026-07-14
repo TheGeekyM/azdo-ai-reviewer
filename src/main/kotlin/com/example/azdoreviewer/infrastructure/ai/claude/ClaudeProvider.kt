@@ -135,8 +135,12 @@ class ClaudeProvider(
             }
         }
 
-        json.decodeFromString<ClaudeResponse>(finalRaw).content.firstOrNull()?.text
-            ?: throw AiException("Claude response had no text.\nRaw: ${finalRaw.take(200)}")
+        // Join all text blocks; thinking models emit a leading non-text block so firstOrNull() would be blank.
+        val resp = json.decodeFromString<ClaudeResponse>(finalRaw)
+        resp.content.filter { it.type == "text" }.joinToString("") { it.text }.ifBlank {
+            throw AiException("Claude returned no text (stop_reason=${resp.stopReason ?: "unknown"}). " +
+                "If you selected a thinking/reasoning model, switch to a standard model or raise Max Tokens.")
+        }
     }
 
     private fun tryRefresh(): Boolean {
@@ -162,7 +166,10 @@ class ClaudeProvider(
     private data class Message(val role: String, val content: String)
 
     @Serializable
-    private data class ClaudeResponse(val content: List<ContentBlock> = emptyList())
+    private data class ClaudeResponse(
+        val content: List<ContentBlock> = emptyList(),
+        @kotlinx.serialization.SerialName("stop_reason") val stopReason: String? = null
+    )
 
     @Serializable
     private data class ContentBlock(val type: String = "", val text: String = "")

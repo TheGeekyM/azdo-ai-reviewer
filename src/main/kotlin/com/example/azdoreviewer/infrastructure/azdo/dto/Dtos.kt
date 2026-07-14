@@ -130,7 +130,7 @@ data class ChangeEntryDto(
 
 @Serializable
 data class ItemDto(
-    val path: String = "",
+    val path: String? = null,
     @SerialName("objectId") val objectId: String = "",
     @SerialName("originalObjectId") val originalObjectId: String = ""
 )

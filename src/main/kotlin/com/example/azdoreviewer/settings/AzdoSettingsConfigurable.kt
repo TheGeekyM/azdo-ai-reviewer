@@ -28,12 +28,14 @@ class AzdoSettingsConfigurable : Configurable {
     companion object {
         // Sensible defaults shown before (or instead of) loading the live list. Blank = provider default.
         private val DEFAULT_MODELS = arrayOf(
-            "",
+            "",                          // blank = provider default (claude-sonnet-4-6)
             "claude-opus-4-8",
+            "claude-opus-4-1",
+            "claude-sonnet-5",
             "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
             "claude-haiku-4-5",
-            "gpt-4o",
-            "llama3"
+            "claude-fable-5"
         )
     }
 
@@ -45,7 +47,7 @@ class AzdoSettingsConfigurable : Configurable {
     private val statusLabel     = JBLabel("")
 
     // AI
-    private val aiProviderCombo = ComboBox(arrayOf("claude", "openai", "ollama"))
+    private val aiProviderCombo = ComboBox(arrayOf("claude"))
     // Editable combo: pick a known model or type a custom ID. "Load models" fills it from the API.
     private val aiModelCombo    = ComboBox(DEFAULT_MODELS).apply { isEditable = true }
     private val loadModelsBtn   = JButton("Load models")

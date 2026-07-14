@@ -3,6 +3,7 @@ package com.example.azdoreviewer.infrastructure.azdo
 import com.example.azdoreviewer.domain.*
 import com.example.azdoreviewer.infrastructure.azdo.dto.*
 import com.example.azdoreviewer.settings.AzdoSettings
+import com.intellij.util.net.ssl.CertificateManager
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -16,6 +17,10 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
     private val http = OkHttpClient.Builder()
+        .sslSocketFactory(
+            CertificateManager.getInstance().sslContext.socketFactory,
+            CertificateManager.getInstance().trustManager
+        )
         .connectTimeout(8, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .addInterceptor { chain ->
@@ -96,6 +101,7 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
         val changes = json.decodeFromString<IterationChangesResponse>(changesBody)
 
         return changes.changeEntries
+            .filter { it.item.path != null }   // deletes/folders can send "path":null
             .take(settings.state.maxFilesPerReview)
             .mapNotNull { entry ->
                 runCatching { buildFileDiff(project, repoId, entry, sourceCommit, baseCommit) }.getOrNull()
@@ -106,6 +112,7 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
         project: String, repoId: String, entry: ChangeEntryDto,
         sourceCommit: String, baseCommit: String
     ): FileDiff {
+        val itemPath = entry.item.path ?: ""
         val changeType = when (entry.changeType.lowercase()) {
             "add"    -> ChangeType.ADD
             "delete" -> ChangeType.DELETE
@@ -115,11 +122,11 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
 
         // New content at the PR source commit (empty for deletes)
         val newContent = if (changeType == ChangeType.DELETE) "" else
-            fetchContentAtCommit(project, repoId, entry.item.path, sourceCommit) ?: ""
+            fetchContentAtCommit(project, repoId, itemPath, sourceCommit) ?: ""
 
         // Old content at the merge base (empty for adds / when base file doesn't exist)
         val oldContent = if (changeType == ChangeType.ADD) "" else
-            fetchContentAtCommit(project, repoId, entry.item.path, baseCommit) ?: ""
+            fetchContentAtCommit(project, repoId, itemPath, baseCommit) ?: ""
 
         val lines = newContent.lines().mapIndexed { i, line ->
             DiffLine(
@@ -134,7 +141,7 @@ class AzdoHttpClient(private val settings: AzdoSettings) : AzdoClient {
             lines    = lines
         )
         return FileDiff(
-            path         = entry.item.path,
+            path         = itemPath,
             originalPath = if (changeType == ChangeType.RENAME) entry.item.originalObjectId else null,
             changeType   = changeType,
             hunks        = listOf(hunk),
